@@ -111,7 +111,7 @@ func (wsc *WSClient) receiveEventsRoutine() {
 				wsc.ErrorsCh <- err
 				continue
 			}
-			if response.Error.Message != "" {
+			if response.Error != nil && response.Error.Message != "" {
 				wsc.ErrorsCh <- errors.Errorf(response.Error.Message)
 				continue
 			}
