@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/tendermint/tendermint/types"
 
 	. "github.com/tendermint/tmlibs/common"
+
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -16,11 +19,12 @@ func init() {
 }
 
 func TestTxConcurrentWithCommit(t *testing.T) {
-
 	state, privVals := randGenesisState(1, false, 10)
 	cs := newConsensusState(state, privVals[0], NewCounterApplication())
 	height, round := cs.Height, cs.Round
-	newBlockCh := subscribeToEvent(cs.evsw, "tester", types.EventStringNewBlock(), 1)
+	newBlockCh := make(chan interface{})
+	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, newBlockCh)
+	require.NoError(t, err)
 
 	deliverTxsRange := func(start, end int) {
 		// Deliver some txs.
@@ -28,9 +32,7 @@ func TestTxConcurrentWithCommit(t *testing.T) {
 			txBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(txBytes, uint64(i))
 			err := cs.mempool.CheckTx(txBytes, nil)
-			if err != nil {
-				panic(Fmt("Error after CheckTx: %v", err))
-			}
+			require.NoError(t, err, "Error after CheckTx")
 			//	time.Sleep(time.Microsecond * time.Duration(rand.Int63n(3000)))
 		}
 	}

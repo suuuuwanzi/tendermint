@@ -1,15 +1,17 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/pkg/errors"
 	data "github.com/tendermint/go-wire/data"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	"github.com/tendermint/tendermint/rpc/lib/client"
+	rpcclient "github.com/tendermint/tendermint/rpc/lib/client"
 	"github.com/tendermint/tendermint/types"
-	events "github.com/tendermint/tmlibs/events"
+	cmn "github.com/tendermint/tmlibs/common"
 )
 
 /*
@@ -45,7 +47,7 @@ func (c *HTTP) _assertIsNetworkClient() NetworkClient {
 	return c
 }
 
-func (c *HTTP) _assertIsEventSwitch() types.EventSwitch {
+func (c *HTTP) _assertIsEventsClient() EventsClient {
 	return c
 }
 
@@ -185,123 +187,77 @@ func (c *HTTP) Validators() (*ctypes.ResultValidators, error) {
 /** websocket event stuff here... **/
 
 type WSEvents struct {
-	types.EventSwitch
+	cmn.BaseService
 	remote   string
 	endpoint string
 	ws       *rpcclient.WSClient
 
+	out chan<- interface{}
+	mtx sync.Mutex
+
 	// used for signaling the goroutine that feeds ws -> EventSwitch
 	quit chan bool
 	done chan bool
-
-	// used to maintain counts of actively listened events
-	// so we can properly subscribe/unsubscribe
-	// FIXME: thread-safety???
-	// FIXME: reuse code from tmlibs/events???
-	evtCount  map[string]int      // count how many time each event is subscribed
-	listeners map[string][]string // keep track of which events each listener is listening to
 }
 
 func newWSEvents(remote, endpoint string) *WSEvents {
-	return &WSEvents{
-		EventSwitch: types.NewEventSwitch(),
-		endpoint:    endpoint,
-		remote:      remote,
-		quit:        make(chan bool, 1),
-		done:        make(chan bool, 1),
-		evtCount:    map[string]int{},
-		listeners:   map[string][]string{},
+	wsEvents := &WSEvents{
+		endpoint: endpoint,
+		remote:   remote,
+		quit:     make(chan bool, 1),
+		done:     make(chan bool, 1),
 	}
-}
 
-func (w *WSEvents) _assertIsEventSwitch() types.EventSwitch {
-	return w
+	wsEvents.BaseService = *cmn.NewBaseService(nil, "WSEvents", wsEvents)
+	return wsEvents
 }
 
 // Start is the only way I could think the extend OnStart from
 // events.eventSwitch.  If only it wasn't private...
 // BaseService.Start -> eventSwitch.OnStart -> WSEvents.Start
 func (w *WSEvents) Start() (bool, error) {
-	st, err := w.EventSwitch.Start()
-	// if we did start, then OnStart here...
-	if st && err == nil {
-		ws := rpcclient.NewWSClient(w.remote, w.endpoint)
-		_, err = ws.Start()
-		if err == nil {
-			w.ws = ws
-			go w.eventListener()
-		}
+	ws := rpcclient.NewWSClient(w.remote, w.endpoint)
+	started, err := ws.Start()
+	if err == nil {
+		w.ws = ws
+		go w.eventListener()
 	}
-	return st, errors.Wrap(err, "StartWSEvent")
+	return started, errors.Wrap(err, "StartWSEvent")
 }
 
 // Stop wraps the BaseService/eventSwitch actions as Start does
 func (w *WSEvents) Stop() bool {
-	stop := w.EventSwitch.Stop()
-	if stop {
-		// send a message to quit to stop the eventListener
-		w.quit <- true
-		<-w.done
-		w.ws.Stop()
-		w.ws = nil
-	}
-	return stop
+	// send a message to quit to stop the eventListener
+	w.quit <- true
+	<-w.done
+	w.ws.Stop()
+	w.ws = nil
+	return true
 }
 
-/** TODO: more intelligent subscriptions! **/
-func (w *WSEvents) AddListenerForEvent(listenerID, event string, cb events.EventCallback) {
-	// no one listening -> subscribe
-	if w.evtCount[event] == 0 {
-		w.subscribe(event)
+func (w *WSEvents) Subscribe(ctx context.Context, query string, out chan<- interface{}) error {
+	// TODO: I wished our RPC accepted contexts
+	err := w.ws.Subscribe(query)
+	if err != nil {
+		return errors.Wrap(err, "failed to subscribe")
 	}
-	// if this listener was already listening to this event, return early
-	for _, s := range w.listeners[listenerID] {
-		if event == s {
-			return
-		}
+
+	w.mtx.Lock()
+	if w.out != nil {
+		close(w.out)
 	}
-	// otherwise, add this event to this listener
-	w.evtCount[event] += 1
-	w.listeners[listenerID] = append(w.listeners[listenerID], event)
-	w.EventSwitch.AddListenerForEvent(listenerID, event, cb)
+	w.out = out
+	w.mtx.Unlock()
+
+	return nil
 }
 
-func (w *WSEvents) RemoveListenerForEvent(event string, listenerID string) {
-	// if this listener is listening already, splice it out
-	found := false
-	l := w.listeners[listenerID]
-	for i, s := range l {
-		if event == s {
-			found = true
-			w.listeners[listenerID] = append(l[:i], l[i+1:]...)
-			break
-		}
-	}
-	// if the listener wasn't already listening to the event, exit early
-	if !found {
-		return
-	}
-
-	// now we can update the subscriptions
-	w.evtCount[event] -= 1
-	if w.evtCount[event] == 0 {
-		w.unsubscribe(event)
-	}
-	w.EventSwitch.RemoveListenerForEvent(event, listenerID)
+func (w *WSEvents) Unsubscribe(ctx context.Context, query string) error {
+	return w.ws.Unsubscribe(query)
 }
 
-func (w *WSEvents) RemoveListener(listenerID string) {
-	// remove all counts for this listener
-	for _, s := range w.listeners[listenerID] {
-		w.evtCount[s] -= 1
-		if w.evtCount[s] == 0 {
-			w.unsubscribe(s)
-		}
-	}
-	w.listeners[listenerID] = nil
-
-	// then let the switch do it's magic
-	w.EventSwitch.RemoveListener(listenerID)
+func (w *WSEvents) UnsubscribeAll(ctx context.Context) error {
+	return w.ws.UnsubscribeAll()
 }
 
 // eventListener is an infinite loop pulling all websocket events
@@ -342,22 +298,10 @@ func (w *WSEvents) parseEvent(data []byte) (err error) {
 		return nil
 	}
 	// looks good!  let's fire this baby!
-	w.EventSwitch.FireEvent(result.Name, result.Data)
+	if result.Name != "" {
+		w.mtx.Lock()
+		w.out <- result.Data
+		w.mtx.Unlock()
+	}
 	return nil
-}
-
-// no way of exposing these failures, so we panic.
-// is this right?  or silently ignore???
-func (w *WSEvents) subscribe(event string) {
-	err := w.ws.Subscribe(event)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (w *WSEvents) unsubscribe(event string) {
-	err := w.ws.Unsubscribe(event)
-	if err != nil {
-		panic(err)
-	}
 }

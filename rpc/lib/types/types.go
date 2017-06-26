@@ -3,8 +3,6 @@ package rpctypes
 import (
 	"encoding/json"
 	"strings"
-
-	events "github.com/tendermint/tmlibs/events"
 )
 
 type RPCRequest struct {
@@ -75,9 +73,12 @@ func NewRPCResponse(id string, res interface{}, err string) RPCResponse {
 // *wsConnection implements this interface.
 type WSRPCConnection interface {
 	GetRemoteAddr() string
-	GetEventSwitch() events.EventSwitch
 	WriteRPCResponse(resp RPCResponse)
 	TryWriteRPCResponse(resp RPCResponse) bool
+
+	AddSubscription(string, interface{})
+	DeleteSubscription(string) (interface{}, bool)
+	DeleteAllSubscriptions()
 }
 
 // websocket-only RPCFuncs take this as the first parameter.

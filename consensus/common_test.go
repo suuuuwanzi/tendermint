@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -22,11 +23,16 @@ import (
 	. "github.com/tendermint/tmlibs/common"
 	dbm "github.com/tendermint/tmlibs/db"
 	"github.com/tendermint/tmlibs/log"
+	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 
 	"github.com/tendermint/abci/example/counter"
 	"github.com/tendermint/abci/example/dummy"
 
 	"github.com/go-kit/kit/log/term"
+)
+
+const (
+	testClientID = "test-client"
 )
 
 // genesis, chain_id, priv_val
@@ -207,11 +213,14 @@ func validatePrevoteAndPrecommit(t *testing.T, cs *ConsensusState, thisRound, lo
 
 // genesis
 func subscribeToVoter(cs *ConsensusState, addr []byte) chan interface{} {
-	voteCh0 := subscribeToEvent(cs.evsw, "tester", types.EventStringVote(), 1)
+	voteCh0 := make(chan interface{})
+	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryVote, voteCh0)
+	if err != nil {
+		panic(fmt.Sprintf("failed to subscribe %s to %v", testClientID, types.EventQueryVote))
+	}
 	voteCh := make(chan interface{})
 	go func() {
-		for {
-			v := <-voteCh0
+		for v := range voteCh0 {
 			vote := v.(types.TMEventData).Unwrap().(types.EventDataVote)
 			// we only fire for our own votes
 			if bytes.Equal(addr, vote.Vote.ValidatorAddress) {
@@ -248,10 +257,12 @@ func newConsensusStateWithConfig(thisConfig *cfg.Config, state *sm.State, pv *ty
 	cs.SetLogger(log.TestingLogger())
 	cs.SetPrivValidator(pv)
 
-	evsw := types.NewEventSwitch()
-	evsw.SetLogger(log.TestingLogger().With("module", "events"))
-	cs.SetEventSwitch(evsw)
-	evsw.Start()
+	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
+	pubsub.SetLogger(log.TestingLogger().With("module", "pubsub"))
+	eventBus := types.NewEventBus(pubsub)
+	eventBus.Start()
+	cs.SetEventBus(eventBus)
+
 	return cs
 }
 
@@ -293,7 +304,7 @@ func randConsensusState(nValidators int) (*ConsensusState, []*validatorStub) {
 
 //-------------------------------------------------------------------------------
 
-func ensureNoNewStep(stepCh chan interface{}) {
+func ensureNoNewStep(stepCh <-chan interface{}) {
 	timeout := time.NewTicker(ensureTimeout * time.Second)
 	select {
 	case <-timeout.C:

@@ -22,7 +22,7 @@ func TestHeaderEvents(t *testing.T) {
 			defer c.Stop()
 		}
 
-		evtTyp := types.EventStringNewBlockHeader()
+		evtTyp := types.EventNewBlockHeader
 		evt, err := client.WaitForOneEvent(c, evtTyp, 1*time.Second)
 		require.Nil(err, "%d: %+v", i, err)
 		_, ok := evt.Unwrap().(types.EventDataNewBlockHeader)
@@ -45,20 +45,20 @@ func TestBlockEvents(t *testing.T) {
 
 		// listen for a new block; ensure height increases by 1
 		var firstBlockHeight int
-		for i := 0; i < 3; i++ {
-			evtTyp := types.EventStringNewBlock()
+		for j := 0; j < 3; j++ {
+			evtTyp := types.EventNewBlock
 			evt, err := client.WaitForOneEvent(c, evtTyp, 1*time.Second)
-			require.Nil(err, "%d: %+v", i, err)
+			require.Nil(err, "%d: %+v", j, err)
 			blockEvent, ok := evt.Unwrap().(types.EventDataNewBlock)
-			require.True(ok, "%d: %#v", i, evt)
+			require.True(ok, "%d: %#v", j, evt)
 
 			block := blockEvent.Block
-			if i == 0 {
+			if j == 0 {
 				firstBlockHeight = block.Header.Height
 				continue
 			}
 
-			require.Equal(block.Header.Height, firstBlockHeight+i)
+			require.Equal(block.Header.Height, firstBlockHeight+j)
 		}
 	}
 }
@@ -77,7 +77,7 @@ func TestTxEventsSentWithBroadcastTxAsync(t *testing.T) {
 
 		// make the tx
 		_, _, tx := merktest.MakeTxKV()
-		evtTyp := types.EventStringTx(types.Tx(tx))
+		evtTyp := types.EventTx(types.Tx(tx))
 
 		// send async
 		txres, err := c.BroadcastTxAsync(tx)
@@ -110,9 +110,9 @@ func TestTxEventsSentWithBroadcastTxSync(t *testing.T) {
 
 		// make the tx
 		_, _, tx := merktest.MakeTxKV()
-		evtTyp := types.EventStringTx(types.Tx(tx))
+		evtTyp := types.EventTx(types.Tx(tx))
 
-		// send async
+		// send sync
 		txres, err := c.BroadcastTxSync(tx)
 		require.Nil(err, "%+v", err)
 		require.True(txres.Code.IsOK())

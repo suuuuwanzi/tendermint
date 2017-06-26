@@ -29,6 +29,7 @@ import (
 	cmn "github.com/tendermint/tmlibs/common"
 	dbm "github.com/tendermint/tmlibs/db"
 	"github.com/tendermint/tmlibs/log"
+	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 
 	_ "net/http/pprof"
 )
@@ -47,7 +48,7 @@ type Node struct {
 	addrBook *p2p.AddrBook         // known peers
 
 	// services
-	evsw             types.EventSwitch           // pub/sub for services
+	eventBus         *types.EventBus             // pub/sub for services
 	blockStore       *bc.BlockStore              // store the blockchain to disk
 	bcReactor        *bc.BlockchainReactor       // for fast-syncing
 	mempoolReactor   *mempl.MempoolReactor       // for gossipping transactions
@@ -105,14 +106,6 @@ func NewNode(config *cfg.Config, privValidator *types.PrivValidator, clientCreat
 
 	// Generate node PrivKey
 	privKey := crypto.GenPrivKeyEd25519()
-
-	// Make event switch
-	eventSwitch := types.NewEventSwitch()
-	eventSwitch.SetLogger(logger.With("module", "types"))
-	_, err := eventSwitch.Start()
-	if err != nil {
-		cmn.Exit(cmn.Fmt("Failed to start switch: %v", err))
-	}
 
 	// Decide whether to fast-sync or not
 	// We don't fast-sync when the only validator is us.
@@ -196,14 +189,17 @@ func NewNode(config *cfg.Config, privValidator *types.PrivValidator, clientCreat
 		})
 	}
 
-	// add the event switch to all services
-	// they should all satisfy events.Eventable
-	SetEventSwitch(eventSwitch, bcReactor, mempoolReactor, consensusReactor)
+	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
+	pubsub.SetLogger(logger.With("module", "pubsub"))
+	eventBus := types.NewEventBus(pubsub)
+
+	// services which will be publishing and/or subscribing for messages (events)
+	bcReactor.SetEventBus(eventBus)
+	consensusReactor.SetEventBus(eventBus)
 
 	// run the profile server
 	profileHost := config.ProfListenAddress
 	if profileHost != "" {
-
 		go func() {
 			logger.Error("Profile server", "err", http.ListenAndServe(profileHost, nil))
 		}()
@@ -218,7 +214,6 @@ func NewNode(config *cfg.Config, privValidator *types.PrivValidator, clientCreat
 		sw:       sw,
 		addrBook: addrBook,
 
-		evsw:             eventSwitch,
 		blockStore:       blockStore,
 		bcReactor:        bcReactor,
 		mempoolReactor:   mempoolReactor,
@@ -226,12 +221,18 @@ func NewNode(config *cfg.Config, privValidator *types.PrivValidator, clientCreat
 		consensusReactor: consensusReactor,
 		proxyApp:         proxyApp,
 		txIndexer:        txIndexer,
+		eventBus:         eventBus,
 	}
 	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
 	return node
 }
 
 func (n *Node) OnStart() error {
+	_, err := n.eventBus.Start()
+	if err != nil {
+		return err
+	}
+
 	// Create & add listener
 	protocol, address := ProtocolAndAddress(n.config.P2P.ListenAddress)
 	l := p2p.NewDefaultListener(protocol, address, n.config.P2P.SkipUPNP, n.Logger.With("module", "p2p"))
@@ -240,7 +241,7 @@ func (n *Node) OnStart() error {
 	// Start the switch
 	n.sw.SetNodeInfo(n.makeNodeInfo())
 	n.sw.SetNodePrivKey(n.privKey)
-	_, err := n.sw.Start()
+	_, err = n.sw.Start()
 	if err != nil {
 		return err
 	}
@@ -279,6 +280,8 @@ func (n *Node) OnStop() {
 			n.Logger.Error("Error closing listener", "listener", l, "err", err)
 		}
 	}
+
+	n.eventBus.Stop()
 }
 
 func (n *Node) RunForever() {
@@ -286,13 +289,6 @@ func (n *Node) RunForever() {
 	cmn.TrapSignal(func() {
 		n.Stop()
 	})
-}
-
-// Add the event switch to reactors, mempool, etc.
-func SetEventSwitch(evsw types.EventSwitch, eventables ...types.Eventable) {
-	for _, e := range eventables {
-		e.SetEventSwitch(evsw)
-	}
 }
 
 // Add a Listener to accept inbound peer connections.
@@ -305,7 +301,6 @@ func (n *Node) AddListener(l p2p.Listener) {
 // ConfigureRPC sets all variables in rpccore so they will serve
 // rpc calls from this node
 func (n *Node) ConfigureRPC() {
-	rpccore.SetEventSwitch(n.evsw)
 	rpccore.SetBlockStore(n.blockStore)
 	rpccore.SetConsensusState(n.consensusState)
 	rpccore.SetMempool(n.mempoolReactor.Mempool)
@@ -315,6 +310,7 @@ func (n *Node) ConfigureRPC() {
 	rpccore.SetAddrBook(n.addrBook)
 	rpccore.SetProxyAppQuery(n.proxyApp.Query())
 	rpccore.SetTxIndexer(n.txIndexer)
+	rpccore.SetEventBus(n.eventBus)
 	rpccore.SetLogger(n.Logger.With("module", "rpc"))
 }
 
@@ -330,7 +326,7 @@ func (n *Node) startRPC() ([]net.Listener, error) {
 	listeners := make([]net.Listener, len(listenAddrs))
 	for i, listenAddr := range listenAddrs {
 		mux := http.NewServeMux()
-		wm := rpcserver.NewWebsocketManager(rpccore.Routes, n.evsw)
+		wm := rpcserver.NewWebsocketManager(rpccore.Routes)
 		rpcLogger := n.Logger.With("module", "rpc-server")
 		wm.SetLogger(rpcLogger)
 		mux.HandleFunc("/websocket", wm.WebsocketHandler)
@@ -375,8 +371,8 @@ func (n *Node) MempoolReactor() *mempl.MempoolReactor {
 	return n.mempoolReactor
 }
 
-func (n *Node) EventSwitch() types.EventSwitch {
-	return n.evsw
+func (n *Node) EventBus() *types.EventBus {
+	return n.eventBus
 }
 
 // XXX: for convenience

@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -149,17 +150,9 @@ func runReplayTest(t *testing.T, cs *ConsensusState, walFile string, newBlockCh 
 	// Assuming the consensus state is running, replay of any WAL, including the empty one,
 	// should eventually be followed by a new block, or else something is wrong
 	waitForBlock(newBlockCh, thisCase, i)
-	cs.evsw.Stop()
 	cs.Stop()
-LOOP:
-	for {
-		select {
-		case <-newBlockCh:
-		default:
-			break LOOP
-		}
-	}
 	cs.Wait()
+	cs.eventBus.Stop()
 }
 
 func toPV(pv PrivValidator) *types.PrivValidator {
@@ -189,7 +182,11 @@ func setupReplayTest(t *testing.T, thisCase *testCase, nLines int, crashAfter bo
 
 	t.Logf("[WARN] setupReplayTest LastStep=%v", toPV(cs.privValidator).LastStep)
 
-	newBlockCh := subscribeToEvent(cs.evsw, "tester", types.EventStringNewBlock(), 1)
+	newBlockCh := make(chan interface{}, 1)
+	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, newBlockCh)
+	if err != nil {
+		t.Fatalf("Error starting event bus: %v", err)
+	}
 
 	return cs, newBlockCh, lastMsg, walFile
 }
@@ -238,26 +235,25 @@ func TestWALCrashBeforeWritePropose(t *testing.T) {
 
 func TestWALCrashBeforeWritePrevote(t *testing.T) {
 	for _, thisCase := range testCases {
-		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.prevoteLine, types.EventStringCompleteProposal())
+		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.prevoteLine)
 	}
 }
 
 func TestWALCrashBeforeWritePrecommit(t *testing.T) {
 	for _, thisCase := range testCases {
-		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.precommitLine, types.EventStringPolka())
+		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.precommitLine)
 	}
 }
 
-func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum int, eventString string) {
+func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum int) {
 	// setup replay test where last message is a vote
 	cs, newBlockCh, voteMsg, walFile := setupReplayTest(t, thisCase, lineNum, false)
-	types.AddListenerForEvent(cs.evsw, "tester", eventString, func(data types.TMEventData) {
-		msg := readTimedWALMessage(t, voteMsg)
-		vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
-		// Set LastSig
-		toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
-		toPV(cs.privValidator).LastSignature = vote.Vote.Signature
-	})
+
+	msg := readTimedWALMessage(t, voteMsg)
+	vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
+	toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
+	toPV(cs.privValidator).LastSignature = vote.Vote.Signature
+
 	runReplayTest(t, cs, walFile, newBlockCh, thisCase, lineNum)
 }
 
@@ -384,7 +380,7 @@ func testHandshakeReplay(t *testing.T, nBlocks int, mode uint) {
 }
 
 func applyBlock(st *sm.State, blk *types.Block, proxyApp proxy.AppConns) {
-	err := st.ApplyBlock(nil, proxyApp.Consensus(), blk, blk.MakePartSet(testPartSize).Header(), mempool)
+	err := st.ApplyBlock(types.NopEventBus{}, proxyApp.Consensus(), blk, blk.MakePartSet(testPartSize).Header(), mempool)
 	if err != nil {
 		panic(err)
 	}

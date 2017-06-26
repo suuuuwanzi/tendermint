@@ -27,7 +27,6 @@ type MempoolReactor struct {
 	p2p.BaseReactor
 	config  *cfg.MempoolConfig
 	Mempool *Mempool
-	evsw    types.EventSwitch
 }
 
 // NewMempoolReactor returns a new MempoolReactor with the given config and mempool.
@@ -145,11 +144,6 @@ func (memR *MempoolReactor) broadcastTxRoutine(peer Peer) {
 		next = next.NextWait()
 		continue
 	}
-}
-
-// SetEventSwitch implements events.Eventable.
-func (memR *MempoolReactor) SetEventSwitch(evsw types.EventSwitch) {
-	memR.evsw = evsw
 }
 
 //-----------------------------------------------------------------------------

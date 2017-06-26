@@ -2,11 +2,13 @@ package consensus
 
 import (
 	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 
 	wire "github.com/tendermint/go-wire"
 	cmn "github.com/tendermint/tmlibs/common"
@@ -34,7 +36,7 @@ type ConsensusReactor struct {
 
 	conS     *ConsensusState
 	fastSync bool
-	evsw     types.EventSwitch
+	eventBus *types.EventBus
 }
 
 // NewConsensusReactor returns a new ConsensusReactor with the given consensusState.
@@ -52,16 +54,18 @@ func (conR *ConsensusReactor) OnStart() error {
 	conR.Logger.Info("ConsensusReactor ", "fastSync", conR.fastSync)
 	conR.BaseReactor.OnStart()
 
-	// callbacks for broadcasting new steps and votes to peers
-	// upon their respective events (ie. uses evsw)
-	conR.registerEventCallbacks()
+	err := conR.broadcastNewRoundStepsAndVotes()
+	if err != nil {
+		return err
+	}
 
 	if !conR.fastSync {
-		_, err := conR.conS.Start()
+		_, err = conR.conS.Start()
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -290,27 +294,48 @@ func (conR *ConsensusReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte)
 	}
 }
 
-// SetEventSwitch implements events.Eventable
-func (conR *ConsensusReactor) SetEventSwitch(evsw types.EventSwitch) {
-	conR.evsw = evsw
-	conR.conS.SetEventSwitch(evsw)
+// SetEventBus sets event bus.
+func (conR *ConsensusReactor) SetEventBus(b *types.EventBus) {
+	conR.eventBus = b
+	conR.conS.SetEventBus(b)
 }
 
 //--------------------------------------
 
-// Listens for new steps and votes,
-// broadcasting the result to peers
-func (conR *ConsensusReactor) registerEventCallbacks() {
-
-	types.AddListenerForEvent(conR.evsw, "conR", types.EventStringNewRoundStep(), func(data types.TMEventData) {
-		rs := data.Unwrap().(types.EventDataRoundState).RoundState.(*RoundState)
-		conR.broadcastNewRoundStep(rs)
-	})
-
-	types.AddListenerForEvent(conR.evsw, "conR", types.EventStringVote(), func(data types.TMEventData) {
-		edv := data.Unwrap().(types.EventDataVote)
-		conR.broadcastHasVoteMessage(edv.Vote)
-	})
+// broadcastNewRoundStepsAndVotes subscribes for new round steps and votes
+// using the event bus and broadcasts events to peers upon receiving them.
+func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
+	ctx := context.Background()
+	stepsCh := make(chan interface{})
+	err := conR.eventBus.Subscribe(ctx, "consensus-reactor", types.EventQueryNewRoundStep, stepsCh)
+	if err != nil {
+		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryNewRoundStep)
+	}
+	votesCh := make(chan interface{})
+	err = conR.eventBus.Subscribe(ctx, "consensus-reactor", types.EventQueryVote, votesCh)
+	if err != nil {
+		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryVote)
+	}
+	go func() {
+		for {
+			select {
+			case data, ok := <-stepsCh:
+				if ok { // a receive from a closed channel returns the zero value immediately
+					edrs := data.(types.TMEventData).Unwrap().(types.EventDataRoundState)
+					conR.broadcastNewRoundStep(edrs.RoundState.(*RoundState))
+				}
+			case data, ok := <-votesCh:
+				if ok {
+					edv := data.(types.TMEventData).Unwrap().(types.EventDataVote)
+					conR.broadcastHasVoteMessage(edv.Vote)
+				}
+			case <-conR.Quit:
+				conR.eventBus.UnsubscribeAll(ctx, "consensus-reactor")
+				return
+			}
+		}
+	}()
+	return nil
 }
 
 func (conR *ConsensusReactor) broadcastNewRoundStep(rs *RoundState) {

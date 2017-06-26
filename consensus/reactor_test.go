@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,7 +10,9 @@ import (
 	"github.com/tendermint/abci/example/dummy"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/types"
-	"github.com/tendermint/tmlibs/events"
+	tmpubsub "github.com/tendermint/tmlibs/pubsub"
+
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -19,27 +22,27 @@ func init() {
 //----------------------------------------------
 // in-process testnets
 
-func startConsensusNet(t *testing.T, css []*ConsensusState, N int, subscribeEventRespond bool) ([]*ConsensusReactor, []chan interface{}) {
+func startConsensusNet(t *testing.T, css []*ConsensusState, N int) ([]*ConsensusReactor, []chan interface{}, []*types.EventBus) {
 	reactors := make([]*ConsensusReactor, N)
 	eventChans := make([]chan interface{}, N)
+	eventBuses := make([]*types.EventBus, N)
 	logger := consensusLogger()
 	for i := 0; i < N; i++ {
 		reactors[i] = NewConsensusReactor(css[i], true) // so we dont start the consensus states
 		reactors[i].SetLogger(logger.With("validator", i))
 
-		eventSwitch := events.NewEventSwitch()
-		eventSwitch.SetLogger(logger.With("module", "events", "validator", i))
-		_, err := eventSwitch.Start()
-		if err != nil {
-			t.Fatalf("Failed to start switch: %v", err)
-		}
+		pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
+		pubsub.SetLogger(logger.With("module", "pubsub", "validator", i))
 
-		reactors[i].SetEventSwitch(eventSwitch)
-		if subscribeEventRespond {
-			eventChans[i] = subscribeToEventRespond(eventSwitch, "tester", types.EventStringNewBlock())
-		} else {
-			eventChans[i] = subscribeToEvent(eventSwitch, "tester", types.EventStringNewBlock(), 1)
-		}
+		eventBuses[i] = types.NewEventBus(pubsub)
+		_, err := eventBuses[i].Start()
+		require.NoError(t, err)
+
+		reactors[i].SetEventBus(eventBuses[i])
+
+		eventChans[i] = make(chan interface{}, 1)
+		err = eventBuses[i].Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, eventChans[i])
+		require.NoError(t, err)
 	}
 	// make connected switches and start all reactors
 	p2p.MakeConnectedSwitches(config.P2P, N, func(i int, s *p2p.Switch) *p2p.Switch {
@@ -54,12 +57,15 @@ func startConsensusNet(t *testing.T, css []*ConsensusState, N int, subscribeEven
 		s := reactors[i].conS.GetState()
 		reactors[i].SwitchToConsensus(s)
 	}
-	return reactors, eventChans
+	return reactors, eventChans, eventBuses
 }
 
-func stopConsensusNet(reactors []*ConsensusReactor) {
+func stopConsensusNet(reactors []*ConsensusReactor, eventBuses []*types.EventBus) {
 	for _, r := range reactors {
 		r.Switch.Stop()
+	}
+	for _, b := range eventBuses {
+		b.Stop()
 	}
 }
 
@@ -67,8 +73,8 @@ func stopConsensusNet(reactors []*ConsensusReactor) {
 func TestReactor(t *testing.T) {
 	N := 4
 	css := randConsensusNet(N, "consensus_reactor_test", newMockTickerFunc(true), newCounter)
-	reactors, eventChans := startConsensusNet(t, css, N, false)
-	defer stopConsensusNet(reactors)
+	reactors, eventChans, eventBuses := startConsensusNet(t, css, N)
+	defer stopConsensusNet(reactors, eventBuses)
 	// wait till everyone makes the first new block
 	timeoutWaitGroup(t, N, func(wg *sync.WaitGroup, j int) {
 		<-eventChans[j]
@@ -82,8 +88,8 @@ func TestReactor(t *testing.T) {
 func TestVotingPowerChange(t *testing.T) {
 	nVals := 4
 	css := randConsensusNet(nVals, "consensus_voting_power_changes_test", newMockTickerFunc(true), newPersistentDummy)
-	reactors, eventChans := startConsensusNet(t, css, nVals, true)
-	defer stopConsensusNet(reactors)
+	reactors, eventChans, eventBuses := startConsensusNet(t, css, nVals)
+	defer stopConsensusNet(reactors, eventBuses)
 
 	// map of active validators
 	activeVals := make(map[string]struct{})
@@ -94,7 +100,6 @@ func TestVotingPowerChange(t *testing.T) {
 	// wait till everyone makes block 1
 	timeoutWaitGroup(t, nVals, func(wg *sync.WaitGroup, j int) {
 		<-eventChans[j]
-		eventChans[j] <- struct{}{}
 		wg.Done()
 	}, css)
 
@@ -143,8 +148,8 @@ func TestValidatorSetChanges(t *testing.T) {
 	nPeers := 7
 	nVals := 4
 	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(true), newPersistentDummy)
-	reactors, eventChans := startConsensusNet(t, css, nPeers, true)
-	defer stopConsensusNet(reactors)
+	reactors, eventChans, eventBuses := startConsensusNet(t, css, nPeers)
+	defer stopConsensusNet(reactors, eventBuses)
 
 	// map of active validators
 	activeVals := make(map[string]struct{})
@@ -155,7 +160,6 @@ func TestValidatorSetChanges(t *testing.T) {
 	// wait till everyone makes block 1
 	timeoutWaitGroup(t, nPeers, func(wg *sync.WaitGroup, j int) {
 		<-eventChans[j]
-		eventChans[j] <- struct{}{}
 		wg.Done()
 	}, css)
 
@@ -240,8 +244,8 @@ func TestReactorWithTimeoutCommit(t *testing.T) {
 		css[i].config.SkipTimeoutCommit = false
 	}
 
-	reactors, eventChans := startConsensusNet(t, css, N-1, false)
-	defer stopConsensusNet(reactors)
+	reactors, eventChans, eventBuses := startConsensusNet(t, css, N-1)
+	defer stopConsensusNet(reactors, eventBuses)
 
 	// wait till everyone makes the first new block
 	timeoutWaitGroup(t, N-1, func(wg *sync.WaitGroup, j int) {
@@ -263,7 +267,6 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 			css[j].mempool.CheckTx(tx, nil)
 		}
 
-		eventChans[j] <- struct{}{}
 		wg.Done()
 	}, css)
 }

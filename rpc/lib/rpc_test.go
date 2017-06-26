@@ -88,7 +88,7 @@ func init() {
 
 	mux := http.NewServeMux()
 	server.RegisterRPCFuncs(mux, Routes, log.TestingLogger())
-	wm := server.NewWebsocketManager(Routes, nil)
+	wm := server.NewWebsocketManager(Routes)
 	wm.SetLogger(log.TestingLogger())
 	mux.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
 	go func() {
@@ -100,7 +100,7 @@ func init() {
 
 	mux2 := http.NewServeMux()
 	server.RegisterRPCFuncs(mux2, Routes, log.TestingLogger())
-	wm = server.NewWebsocketManager(Routes, nil)
+	wm = server.NewWebsocketManager(Routes)
 	wm.SetLogger(log.TestingLogger())
 	mux2.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
 	go func() {

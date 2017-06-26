@@ -101,11 +101,13 @@ type RoundState struct {
 
 // RoundStateEvent returns the H/R/S of the RoundState as an event.
 func (rs *RoundState) RoundStateEvent() types.EventDataRoundState {
+	// copy to avoid data race
+	rsCopy := *rs
 	edrs := types.EventDataRoundState{
 		Height:     rs.Height,
 		Round:      rs.Round,
 		Step:       rs.Step.String(),
-		RoundState: rs,
+		RoundState: &rsCopy,
 	}
 	return edrs
 }
@@ -208,9 +210,9 @@ type ConsensusState struct {
 	internalMsgQueue chan msgInfo
 	timeoutTicker    TimeoutTicker
 
-	// we use PubSub to trigger msg broadcasts in the reactor,
+	// we use eventBus to trigger msg broadcasts in the reactor,
 	// and to notify external subscribers, eg. through a websocket
-	evsw types.EventSwitch
+	eventBus *types.EventBus
 
 	// a Write-Ahead Log ensures we can recover from any kind of crash
 	// and helps us avoid signing conflicting votes
@@ -263,9 +265,9 @@ func (cs *ConsensusState) SetLogger(l log.Logger) {
 	cs.timeoutTicker.SetLogger(l)
 }
 
-// SetEventSwitch implements events.Eventable
-func (cs *ConsensusState) SetEventSwitch(evsw types.EventSwitch) {
-	cs.evsw = evsw
+// SetEventBus sets event bus.
+func (cs *ConsensusState) SetEventBus(b *types.EventBus) {
+	cs.eventBus = b
 }
 
 // String returns a string.
@@ -593,9 +595,9 @@ func (cs *ConsensusState) newStep() {
 	rs := cs.RoundStateEvent()
 	cs.wal.Save(rs)
 	cs.nSteps += 1
-	// newStep is called by updateToStep in NewConsensusState before the evsw is set!
-	if cs.evsw != nil {
-		types.FireEventNewRoundStep(cs.evsw, rs)
+	// newStep is called by updateToStep in NewConsensusState before the eventBus is set!
+	if cs.eventBus != nil {
+		cs.eventBus.PublishEventNewRoundStep(rs)
 	}
 }
 
@@ -709,13 +711,13 @@ func (cs *ConsensusState) handleTimeout(ti timeoutInfo, rs RoundState) {
 		// XXX: should we fire timeout here (for timeout commit)?
 		cs.enterNewRound(ti.Height, 0)
 	case RoundStepPropose:
-		types.FireEventTimeoutPropose(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventTimeoutPropose(cs.RoundStateEvent())
 		cs.enterPrevote(ti.Height, ti.Round)
 	case RoundStepPrevoteWait:
-		types.FireEventTimeoutWait(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventTimeoutWait(cs.RoundStateEvent())
 		cs.enterPrecommit(ti.Height, ti.Round)
 	case RoundStepPrecommitWait:
-		types.FireEventTimeoutWait(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventTimeoutWait(cs.RoundStateEvent())
 		cs.enterNewRound(ti.Height, ti.Round+1)
 	default:
 		panic(cmn.Fmt("Invalid timeout step: %v", ti.Step))
@@ -768,7 +770,7 @@ func (cs *ConsensusState) enterNewRound(height int, round int) {
 	}
 	cs.Votes.SetRound(round + 1) // also track next round (round+1) to allow round-skipping
 
-	types.FireEventNewRound(cs.evsw, cs.RoundStateEvent())
+	cs.eventBus.PublishEventNewRound(cs.RoundStateEvent())
 
 	// Immediately go to enterPropose.
 	cs.enterPropose(height, round)
@@ -921,7 +923,7 @@ func (cs *ConsensusState) enterPrevote(height int, round int) {
 
 	// fire event for how we got here
 	if cs.isProposalComplete() {
-		types.FireEventCompleteProposal(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventCompleteProposal(cs.RoundStateEvent())
 	} else {
 		// we received +2/3 prevotes for a future round
 		// TODO: catchup event?
@@ -1023,7 +1025,7 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 	}
 
 	// At this point +2/3 prevoted for a particular block or nil
-	types.FireEventPolka(cs.evsw, cs.RoundStateEvent())
+	cs.eventBus.PublishEventPolka(cs.RoundStateEvent())
 
 	// the latest POLRound should be this round
 	polRound, _ := cs.Votes.POLInfo()
@@ -1040,7 +1042,7 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 			cs.LockedRound = 0
 			cs.LockedBlock = nil
 			cs.LockedBlockParts = nil
-			types.FireEventUnlock(cs.evsw, cs.RoundStateEvent())
+			cs.eventBus.PublishEventUnlock(cs.RoundStateEvent())
 		}
 		cs.signAddVote(types.VoteTypePrecommit, nil, types.PartSetHeader{})
 		return
@@ -1052,7 +1054,7 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 	if cs.LockedBlock.HashesTo(blockID.Hash) {
 		cs.Logger.Info("enterPrecommit: +2/3 prevoted locked block. Relocking")
 		cs.LockedRound = round
-		types.FireEventRelock(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventRelock(cs.RoundStateEvent())
 		cs.signAddVote(types.VoteTypePrecommit, blockID.Hash, blockID.PartsHeader)
 		return
 	}
@@ -1067,7 +1069,7 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 		cs.LockedRound = round
 		cs.LockedBlock = cs.ProposalBlock
 		cs.LockedBlockParts = cs.ProposalBlockParts
-		types.FireEventLock(cs.evsw, cs.RoundStateEvent())
+		cs.eventBus.PublishEventLock(cs.RoundStateEvent())
 		cs.signAddVote(types.VoteTypePrecommit, blockID.Hash, blockID.PartsHeader)
 		return
 	}
@@ -1083,7 +1085,7 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 		cs.ProposalBlock = nil
 		cs.ProposalBlockParts = types.NewPartSetFromHeader(blockID.PartsHeader)
 	}
-	types.FireEventUnlock(cs.evsw, cs.RoundStateEvent())
+	cs.eventBus.PublishEventUnlock(cs.RoundStateEvent())
 	cs.signAddVote(types.VoteTypePrecommit, nil, types.PartSetHeader{})
 }
 
@@ -1236,12 +1238,12 @@ func (cs *ConsensusState) finalizeCommit(height int) {
 	// Create a copy of the state for staging
 	// and an event cache for txs
 	stateCopy := cs.state.Copy()
-	eventCache := types.NewEventCache(cs.evsw)
+	txEventBuffer := types.NewTxEventBuffer(cs.eventBus)
 
 	// Execute and commit the block, update and save the state, and update the mempool.
 	// All calls to the proxyAppConn come here.
 	// NOTE: the block.AppHash wont reflect these txs until the next block
-	err := stateCopy.ApplyBlock(eventCache, cs.proxyAppConn, block, blockParts.Header(), cs.mempool)
+	err := stateCopy.ApplyBlock(txEventBuffer, cs.proxyAppConn, block, blockParts.Header(), cs.mempool)
 	if err != nil {
 		cs.Logger.Error("Error on ApplyBlock. Did the application crash? Please restart tendermint", "err", err)
 		return
@@ -1256,9 +1258,12 @@ func (cs *ConsensusState) finalizeCommit(height int) {
 	//	* Fire before persisting state, in ApplyBlock
 	//	* Fire on start up if we haven't written any new WAL msgs
 	//   Both options mean we may fire more than once. Is that fine ?
-	types.FireEventNewBlock(cs.evsw, types.EventDataNewBlock{block})
-	types.FireEventNewBlockHeader(cs.evsw, types.EventDataNewBlockHeader{block.Header})
-	eventCache.Flush()
+	cs.eventBus.PublishEventNewBlock(types.EventDataNewBlock{block})
+	cs.eventBus.PublishEventNewBlockHeader(types.EventDataNewBlockHeader{block.Header})
+	err = txEventBuffer.Flush()
+	if err != nil {
+		cs.Logger.Error("Failed to flush event buffer", "err", err)
+	}
 
 	fail.Fail() // XXX
 
@@ -1392,7 +1397,7 @@ func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool,
 		added, err = cs.LastCommit.AddVote(vote)
 		if added {
 			cs.Logger.Info(cmn.Fmt("Added to lastPrecommits: %v", cs.LastCommit.StringShort()))
-			types.FireEventVote(cs.evsw, types.EventDataVote{vote})
+			cs.eventBus.PublishEventVote(types.EventDataVote{vote})
 
 			// if we can skip timeoutCommit and have all the votes now,
 			if cs.config.SkipTimeoutCommit && cs.LastCommit.HasAll() {
@@ -1410,7 +1415,7 @@ func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool,
 		height := cs.Height
 		added, err = cs.Votes.AddVote(vote, peerKey)
 		if added {
-			types.FireEventVote(cs.evsw, types.EventDataVote{vote})
+			cs.eventBus.PublishEventVote(types.EventDataVote{vote})
 
 			switch vote.Type {
 			case types.VoteTypePrevote:
@@ -1428,7 +1433,7 @@ func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool,
 						cs.LockedRound = 0
 						cs.LockedBlock = nil
 						cs.LockedBlockParts = nil
-						types.FireEventUnlock(cs.evsw, cs.RoundStateEvent())
+						cs.eventBus.PublishEventUnlock(cs.RoundStateEvent())
 					}
 				}
 				if cs.Round <= vote.Round && prevotes.HasTwoThirdsAny() {

@@ -17,7 +17,6 @@ import (
 
 	types "github.com/tendermint/tendermint/rpc/lib/types"
 	cmn "github.com/tendermint/tmlibs/common"
-	events "github.com/tendermint/tmlibs/events"
 	"github.com/tendermint/tmlibs/log"
 )
 
@@ -356,17 +355,19 @@ type wsConnection struct {
 	pingTicker  *time.Ticker
 
 	funcMap map[string]*RPCFunc
-	evsw    events.EventSwitch
+
+	subscriptions map[string]interface{}
 }
 
 // new websocket connection wrapper
-func NewWSConnection(baseConn *websocket.Conn, funcMap map[string]*RPCFunc, evsw events.EventSwitch) *wsConnection {
+func NewWSConnection(baseConn *websocket.Conn, funcMap map[string]*RPCFunc) *wsConnection {
 	wsc := &wsConnection{
 		remoteAddr: baseConn.RemoteAddr().String(),
 		baseConn:   baseConn,
 		writeChan:  make(chan types.RPCResponse, writeChanCapacity), // error when full.
 		funcMap:    funcMap,
-		evsw:       evsw,
+
+		subscriptions: make(map[string]interface{}),
 	}
 	wsc.BaseService = *cmn.NewBaseService(nil, "wsConnection", wsc)
 	return wsc
@@ -405,9 +406,6 @@ func (wsc *wsConnection) OnStart() error {
 
 func (wsc *wsConnection) OnStop() {
 	wsc.BaseService.OnStop()
-	if wsc.evsw != nil {
-		wsc.evsw.RemoveListener(wsc.remoteAddr)
-	}
 	wsc.readTimeout.Stop()
 	wsc.pingTicker.Stop()
 	// The write loop closes the websocket connection
@@ -428,11 +426,6 @@ func (wsc *wsConnection) readTimeoutRoutine() {
 // Implements WSRPCConnection
 func (wsc *wsConnection) GetRemoteAddr() string {
 	return wsc.remoteAddr
-}
-
-// Implements WSRPCConnection
-func (wsc *wsConnection) GetEventSwitch() events.EventSwitch {
-	return wsc.evsw
 }
 
 // Implements WSRPCConnection
@@ -458,6 +451,23 @@ func (wsc *wsConnection) TryWriteRPCResponse(resp types.RPCResponse) bool {
 	default:
 		return false
 	}
+}
+
+func (wsc *wsConnection) AddSubscription(query string, data interface{}) {
+	wsc.subscriptions[query] = data
+}
+
+func (wsc *wsConnection) DeleteSubscription(query string) (interface{}, bool) {
+	data, ok := wsc.subscriptions[query]
+	if ok {
+		delete(wsc.subscriptions, query)
+		return data, true
+	}
+	return nil, false
+}
+
+func (wsc *wsConnection) DeleteAllSubscriptions() {
+	wsc.subscriptions = make(map[string]interface{})
 }
 
 // Read from the socket and subscribe to or unsubscribe from events
@@ -571,14 +581,12 @@ func (wsc *wsConnection) writeMessageWithDeadline(msgType int, msg []byte) error
 type WebsocketManager struct {
 	websocket.Upgrader
 	funcMap map[string]*RPCFunc
-	evsw    events.EventSwitch
 	logger  log.Logger
 }
 
-func NewWebsocketManager(funcMap map[string]*RPCFunc, evsw events.EventSwitch) *WebsocketManager {
+func NewWebsocketManager(funcMap map[string]*RPCFunc) *WebsocketManager {
 	return &WebsocketManager{
 		funcMap: funcMap,
-		evsw:    evsw,
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -605,7 +613,7 @@ func (wm *WebsocketManager) WebsocketHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// register connection
-	con := NewWSConnection(wsConn, wm.funcMap, wm.evsw)
+	con := NewWSConnection(wsConn, wm.funcMap)
 	con.SetLogger(wm.logger)
 	wm.logger.Info("New websocket connection", "remote", con.remoteAddr)
 	con.Start() // Blocking

@@ -1,12 +1,11 @@
 package client
 
 import (
+	"context"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/tendermint/tendermint/types"
-	cmn "github.com/tendermint/tmlibs/common"
-	events "github.com/tendermint/tmlibs/events"
 )
 
 // Waiter is informed of current height, decided whether to quit early
@@ -56,33 +55,23 @@ func WaitForHeight(c StatusClient, h int, waiter Waiter) error {
 // when the timeout duration has expired.
 //
 // This handles subscribing and unsubscribing under the hood
-func WaitForOneEvent(evsw types.EventSwitch,
-	evtTyp string, timeout time.Duration) (types.TMEventData, error) {
-	listener := cmn.RandStr(12)
-
-	evts, quit := make(chan events.EventData, 10), make(chan bool, 1)
-	// start timeout count-down
-	go func() {
-		time.Sleep(timeout)
-		quit <- true
-	}()
+func WaitForOneEvent(c EventsClient, evtTyp string, timeout time.Duration) (types.TMEventData, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	evts := make(chan interface{}, 1)
 
 	// register for the next event of this type
-	evsw.AddListenerForEvent(listener, evtTyp, func(data events.EventData) {
-		evts <- data
-	})
+	err := c.Subscribe(ctx, types.EventTypeKey+"="+evtTyp, evts)
+	if err != nil {
+		return types.TMEventData{}, errors.Wrap(err, "failed to subscribe")
+	}
 	// make sure to unregister after the test is over
-	defer evsw.RemoveListenerForEvent(evtTyp, listener)
-	// defer evsw.RemoveListener(listener)  // this also works
+	defer c.UnsubscribeAll(ctx)
 
 	select {
-	case <-quit:
-		return types.TMEventData{}, errors.New("timed out waiting for event")
 	case evt := <-evts:
-		tmevt, ok := evt.(types.TMEventData)
-		if ok {
-			return tmevt, nil
-		}
-		return types.TMEventData{}, errors.Errorf("Got unexpected event type: %#v", evt)
+		return evt.(types.TMEventData), nil
+	case <-time.After(timeout):
+		return types.TMEventData{}, errors.New("timed out waiting for event")
 	}
 }

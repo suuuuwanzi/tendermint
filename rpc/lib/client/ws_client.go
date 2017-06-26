@@ -127,10 +127,10 @@ func (wsc *WSClient) receiveEventsRoutine() {
 	close(wsc.ErrorsCh)
 }
 
-// Subscribe to an event. Note the server must have a "subscribe" route
+// Subscribe to a query. Note the server must have a "subscribe" route
 // defined.
-func (wsc *WSClient) Subscribe(eventid string) error {
-	params := map[string]interface{}{"event": eventid}
+func (wsc *WSClient) Subscribe(query string) error {
+	params := map[string]interface{}{"query": query}
 	request, err := types.MapToRequest("", "subscribe", params)
 	if err == nil {
 		err = wsc.WriteJSON(request)
@@ -138,11 +138,22 @@ func (wsc *WSClient) Subscribe(eventid string) error {
 	return err
 }
 
-// Unsubscribe from an event. Note the server must have a "unsubscribe" route
+// Unsubscribe from a query. Note the server must have a "unsubscribe" route
 // defined.
-func (wsc *WSClient) Unsubscribe(eventid string) error {
-	params := map[string]interface{}{"event": eventid}
+func (wsc *WSClient) Unsubscribe(query string) error {
+	params := map[string]interface{}{"query": query}
 	request, err := types.MapToRequest("", "unsubscribe", params)
+	if err == nil {
+		err = wsc.WriteJSON(request)
+	}
+	return err
+}
+
+// UnsubscribeAll from all queries. Note the server must have a "unsubscribe_all" route
+// defined.
+func (wsc *WSClient) UnsubscribeAll() error {
+	params := map[string]interface{}{}
+	request, err := types.MapToRequest("", "unsubscribe_all", params)
 	if err == nil {
 		err = wsc.WriteJSON(request)
 	}

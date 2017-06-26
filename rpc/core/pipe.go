@@ -31,7 +31,6 @@ type P2P interface {
 
 var (
 	// external, thread safe interfaces
-	eventSwitch   types.EventSwitch
 	proxyAppQuery proxy.AppConnQuery
 
 	// interfaces defined in types and above
@@ -45,13 +44,10 @@ var (
 	genDoc    *types.GenesisDoc // cache the genesis structure
 	addrBook  *p2p.AddrBook
 	txIndexer txindex.TxIndexer
+	eventBus  *types.EventBus
 
 	logger log.Logger
 )
-
-func SetEventSwitch(evsw types.EventSwitch) {
-	eventSwitch = evsw
-}
 
 func SetBlockStore(bs types.BlockStore) {
 	blockStore = bs
@@ -91,4 +87,8 @@ func SetTxIndexer(indexer txindex.TxIndexer) {
 
 func SetLogger(l log.Logger) {
 	logger = l
+}
+
+func SetEventBus(b *types.EventBus) {
+	eventBus = b
 }
