@@ -242,7 +242,7 @@ func TestFullRound1(t *testing.T) {
 	height, round := cs.Height, cs.Round
 
 	voteCh := make(chan interface{}, 0)
-	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryVote, voteCh)
+	err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryVote, voteCh)
 	require.NoError(t, err)
 	propCh := subscribe(cs.eventBus, types.EventQueryCompleteProposal)
 	newRoundCh := subscribe(cs.eventBus, types.EventQueryNewRound)
@@ -1068,9 +1068,9 @@ func TestHalt1(t *testing.T) {
 // subscribe subscribes test client to the given query and returns a channel with cap = 1.
 func subscribe(eventBus *types.EventBus, q tmpubsub.Query) <-chan interface{} {
 	out := make(chan interface{}, 1)
-	err := eventBus.Subscribe(context.Background(), testClientID, q, out)
+	err := eventBus.Subscribe(context.Background(), testSubscriber, q, out)
 	if err != nil {
-		panic(fmt.Sprintf("failed to subscribe %s to %v", testClientID, q))
+		panic(fmt.Sprintf("failed to subscribe %s to %v", testSubscriber, q))
 	}
 	return out
 }

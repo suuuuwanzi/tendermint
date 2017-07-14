@@ -65,7 +65,7 @@ func TestByzantine(t *testing.T) {
 		defer eventBus.Stop()
 
 		eventChans[i] = make(chan interface{}, 1)
-		err = eventBus.Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, eventChans[i])
+		err = eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryNewBlock, eventChans[i])
 		require.NoError(t, err)
 
 		conR := NewConsensusReactor(css[i], true) // so we dont start the consensus states

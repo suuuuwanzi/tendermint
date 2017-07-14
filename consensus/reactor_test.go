@@ -41,7 +41,7 @@ func startConsensusNet(t *testing.T, css []*ConsensusState, N int) ([]*Consensus
 		reactors[i].SetEventBus(eventBuses[i])
 
 		eventChans[i] = make(chan interface{}, 1)
-		err = eventBuses[i].Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, eventChans[i])
+		err = eventBuses[i].Subscribe(context.Background(), testSubscriber, types.EventQueryNewBlock, eventChans[i])
 		require.NoError(t, err)
 	}
 	// make connected switches and start all reactors

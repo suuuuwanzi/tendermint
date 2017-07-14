@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	testClientID = "test-client"
+	testSubscriber = "test-client"
 )
 
 // genesis, chain_id, priv_val
@@ -214,9 +214,9 @@ func validatePrevoteAndPrecommit(t *testing.T, cs *ConsensusState, thisRound, lo
 // genesis
 func subscribeToVoter(cs *ConsensusState, addr []byte) chan interface{} {
 	voteCh0 := make(chan interface{})
-	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryVote, voteCh0)
+	err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryVote, voteCh0)
 	if err != nil {
-		panic(fmt.Sprintf("failed to subscribe %s to %v", testClientID, types.EventQueryVote))
+		panic(fmt.Sprintf("failed to subscribe %s to %v", testSubscriber, types.EventQueryVote))
 	}
 	voteCh := make(chan interface{})
 	go func() {

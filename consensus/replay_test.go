@@ -183,7 +183,7 @@ func setupReplayTest(t *testing.T, thisCase *testCase, nLines int, crashAfter bo
 	t.Logf("[WARN] setupReplayTest LastStep=%v", toPV(cs.privValidator).LastStep)
 
 	newBlockCh := make(chan interface{}, 1)
-	err := cs.eventBus.Subscribe(context.Background(), testClientID, types.EventQueryNewBlock, newBlockCh)
+	err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryNewBlock, newBlockCh)
 	if err != nil {
 		t.Fatalf("Error starting event bus: %v", err)
 	}
