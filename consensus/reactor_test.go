@@ -31,6 +31,7 @@ func startConsensusNet(t *testing.T, css []*ConsensusState, N int) ([]*Consensus
 		reactors[i] = NewConsensusReactor(css[i], true) // so we dont start the consensus states
 		reactors[i].SetLogger(logger.With("validator", i))
 
+		// NOTE: without a buffer tests will freeze
 		pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
 		pubsub.SetLogger(logger.With("module", "pubsub", "validator", i))
 

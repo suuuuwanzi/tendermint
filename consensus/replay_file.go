@@ -44,7 +44,7 @@ func (cs *ConsensusState) ReplayFile(file string, console bool) error {
 	cs.startForReplay()
 
 	// ensure all new step events are regenerated as expected
-	newStepCh := make(chan interface{})
+	newStepCh := make(chan interface{}, 1)
 
 	ctx := context.Background()
 	err := cs.eventBus.Subscribe(ctx, "replay-file", types.EventQueryNewRoundStep, newStepCh)
@@ -191,7 +191,7 @@ func (pb *playback) replayConsoleLoop() int {
 
 			ctx := context.Background()
 			// ensure all new step events are regenerated as expected
-			newStepCh := make(chan interface{})
+			newStepCh := make(chan interface{}, 1)
 
 			err := pb.cs.eventBus.Subscribe(ctx, "replay-file", types.EventQueryNewRoundStep, newStepCh)
 			if err != nil {
