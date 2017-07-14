@@ -305,17 +305,21 @@ func (conR *ConsensusReactor) SetEventBus(b *types.EventBus) {
 // broadcastNewRoundStepsAndVotes subscribes for new round steps and votes
 // using the event bus and broadcasts events to peers upon receiving them.
 func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
+	subscriber := "consensus-reactor"
 	ctx := context.Background()
+
 	stepsCh := make(chan interface{})
-	err := conR.eventBus.Subscribe(ctx, "consensus-reactor", types.EventQueryNewRoundStep, stepsCh)
+	err := conR.eventBus.Subscribe(ctx, subscriber, types.EventQueryNewRoundStep, stepsCh)
 	if err != nil {
 		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryNewRoundStep)
 	}
+
 	votesCh := make(chan interface{})
-	err = conR.eventBus.Subscribe(ctx, "consensus-reactor", types.EventQueryVote, votesCh)
+	err = conR.eventBus.Subscribe(ctx, subscriber, types.EventQueryVote, votesCh)
 	if err != nil {
 		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryVote)
 	}
+
 	go func() {
 		for {
 			select {
@@ -330,7 +334,7 @@ func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
 					conR.broadcastHasVoteMessage(edv.Vote)
 				}
 			case <-conR.Quit:
-				conR.eventBus.UnsubscribeAll(ctx, "consensus-reactor")
+				conR.eventBus.UnsubscribeAll(ctx, subscriber)
 				return
 			}
 		}
