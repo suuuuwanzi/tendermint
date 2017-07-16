@@ -24,6 +24,7 @@ import (
 	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 	"github.com/tendermint/tmlibs/log"
+	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 )
 
 func init() {
@@ -235,24 +236,33 @@ func TestWALCrashBeforeWritePropose(t *testing.T) {
 
 func TestWALCrashBeforeWritePrevote(t *testing.T) {
 	for _, thisCase := range testCases {
-		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.prevoteLine)
+		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.prevoteLine, types.EventQueryCompleteProposal)
 	}
 }
 
 func TestWALCrashBeforeWritePrecommit(t *testing.T) {
 	for _, thisCase := range testCases {
-		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.precommitLine)
+		testReplayCrashBeforeWriteVote(t, thisCase, thisCase.precommitLine, types.EventQueryPolka)
 	}
 }
 
-func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum int) {
+func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum int, eventQuery tmpubsub.Query) {
 	// setup replay test where last message is a vote
 	cs, newBlockCh, voteMsg, walFile := setupReplayTest(t, thisCase, lineNum, false)
 
-	msg := readTimedWALMessage(t, voteMsg)
-	vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
-	toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
-	toPV(cs.privValidator).LastSignature = vote.Vote.Signature
+	eventCh := make(chan interface{}, 1)
+	cs.eventBus.Subscribe(context.Background(), "replay-crash-before-write-vote", eventQuery, eventCh)
+
+	go func() {
+		for range eventCh {
+			msg := readTimedWALMessage(t, voteMsg)
+			vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
+			cs.mtx.Lock()
+			toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
+			toPV(cs.privValidator).LastSignature = vote.Vote.Signature
+			cs.mtx.Unlock()
+		}
+	}()
 
 	runReplayTest(t, cs, walFile, newBlockCh, thisCase, lineNum)
 }
