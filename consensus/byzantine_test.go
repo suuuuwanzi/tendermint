@@ -56,7 +56,7 @@ func TestByzantine(t *testing.T) {
 			css[i].doPrevote = func(height, round int) {}
 		}
 
-		pubsub := tmpubsub.NewServer()
+		pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
 		pubsub.SetLogger(logger.With("module", "pubsub", "validator", i))
 
 		eventBus := types.NewEventBus(pubsub)
