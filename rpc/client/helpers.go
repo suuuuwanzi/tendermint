@@ -61,12 +61,13 @@ func WaitForOneEvent(c EventsClient, evtTyp string, timeout time.Duration) (type
 	evts := make(chan interface{}, 1)
 
 	// register for the next event of this type
-	err := c.Subscribe(ctx, types.EventTypeKey+"="+evtTyp, evts)
+	query := types.EventTypeKey + "=" + evtTyp
+	err := c.Subscribe(ctx, query, evts)
 	if err != nil {
 		return types.TMEventData{}, errors.Wrap(err, "failed to subscribe")
 	}
 	// make sure to unregister after the test is over
-	defer c.UnsubscribeAll(ctx)
+	defer c.Unsubscribe(ctx, query)
 
 	select {
 	case evt := <-evts:
