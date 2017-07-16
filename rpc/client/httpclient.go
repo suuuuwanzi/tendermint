@@ -192,8 +192,8 @@ type WSEvents struct {
 	endpoint string
 	ws       *rpcclient.WSClient
 
-	out chan<- interface{}
-	mtx sync.Mutex
+	subscriptions map[string]chan<- interface{}
+	mtx           sync.RWMutex
 
 	// used for signaling the goroutine that feeds ws -> EventSwitch
 	quit chan bool
@@ -202,10 +202,11 @@ type WSEvents struct {
 
 func newWSEvents(remote, endpoint string) *WSEvents {
 	wsEvents := &WSEvents{
-		endpoint: endpoint,
-		remote:   remote,
-		quit:     make(chan bool, 1),
-		done:     make(chan bool, 1),
+		endpoint:      endpoint,
+		remote:        remote,
+		quit:          make(chan bool, 1),
+		done:          make(chan bool, 1),
+		subscriptions: make(map[string]chan<- interface{}),
 	}
 
 	wsEvents.BaseService = *cmn.NewBaseService(nil, "WSEvents", wsEvents)
@@ -236,6 +237,12 @@ func (w *WSEvents) Stop() bool {
 }
 
 func (w *WSEvents) Subscribe(ctx context.Context, query string, out chan<- interface{}) error {
+	w.mtx.RLock()
+	if _, ok := w.subscriptions[query]; ok {
+		return errors.New("already subscribed")
+	}
+	w.mtx.RUnlock()
+
 	// TODO: I wished our RPC accepted contexts
 	err := w.ws.Subscribe(query)
 	if err != nil {
@@ -243,21 +250,42 @@ func (w *WSEvents) Subscribe(ctx context.Context, query string, out chan<- inter
 	}
 
 	w.mtx.Lock()
-	if w.out != nil {
-		close(w.out)
-	}
-	w.out = out
+	w.subscriptions[query] = out
 	w.mtx.Unlock()
 
 	return nil
 }
 
 func (w *WSEvents) Unsubscribe(ctx context.Context, query string) error {
-	return w.ws.Unsubscribe(query)
+	err := w.ws.Unsubscribe(query)
+	if err != nil {
+		return err
+	}
+
+	w.mtx.Lock()
+	defer w.mtx.Unlock()
+	ch, ok := w.subscriptions[query]
+	if ok {
+		close(ch)
+		delete(w.subscriptions, query)
+	}
+
+	return nil
 }
 
 func (w *WSEvents) UnsubscribeAll(ctx context.Context) error {
-	return w.ws.UnsubscribeAll()
+	err := w.ws.UnsubscribeAll()
+	if err != nil {
+		return err
+	}
+
+	w.mtx.Lock()
+	defer w.mtx.Unlock()
+	for _, ch := range w.subscriptions {
+		close(ch)
+	}
+	w.subscriptions = make(map[string]chan<- interface{})
+	return nil
 }
 
 // eventListener is an infinite loop pulling all websocket events
@@ -297,11 +325,11 @@ func (w *WSEvents) parseEvent(data []byte) (err error) {
 		// TODO: ?
 		return nil
 	}
-	// looks good!  let's fire this baby!
-	if result.Name != "" {
-		w.mtx.Lock()
-		w.out <- result.Data
-		w.mtx.Unlock()
+
+	w.mtx.RLock()
+	if ch, ok := w.subscriptions[result.Query]; ok {
+		ch <- result.Data
 	}
+	w.mtx.RUnlock()
 	return nil
 }
