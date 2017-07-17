@@ -259,7 +259,7 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
 		newBlockI := <-eventChans[j]
 		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
-		t.Logf("[WARN] Got block height=%v validator=%v", newBlock.Height, j)
+		t.Logf("Got block height=%v validator=%v", newBlock.Height, j)
 		err := validateBlock(newBlock, activeVals)
 		if err != nil {
 			t.Fatal(err)
