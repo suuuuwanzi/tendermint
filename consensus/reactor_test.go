@@ -267,7 +267,7 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 		for _, tx := range txs {
 			css[j].mempool.CheckTx(tx, nil)
 		}
-
+		// FIXME: need to block eventHub until we check all txs!
 		wg.Done()
 	}, css)
 }
