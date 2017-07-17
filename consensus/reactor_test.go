@@ -258,6 +258,12 @@ func TestReactorWithTimeoutCommit(t *testing.T) {
 func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
 	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
 		newBlockI := <-eventChans[j]
+
+		// NOTE: need to block css[j].eventHub until we check all txs! otherwise
+		// validator remove/add operations might not get executed in this round and
+		// TestValidatorSetChanges will fail.
+		eventChans[j] <- struct{}{}
+
 		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
 		t.Logf("Got block height=%v validator=%v", newBlock.Height, j)
 		err := validateBlock(newBlock, activeVals)
@@ -267,7 +273,10 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 		for _, tx := range txs {
 			css[j].mempool.CheckTx(tx, nil)
 		}
-		// FIXME: need to block eventHub until we check all txs!
+
+		// see note above
+		<-eventChans[j]
+
 		wg.Done()
 	}, css)
 }
