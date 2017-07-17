@@ -250,13 +250,16 @@ func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum in
 	// setup replay test where last message is a vote
 	cs, newBlockCh, voteMsg, walFile := setupReplayTest(t, thisCase, lineNum, false)
 
-	eventCh := make(chan interface{}, 1)
-	cs.eventBus.Subscribe(context.Background(), "replay-crash-before-write-vote", eventQuery, eventCh)
+	eventCh := make(chan interface{})
+	err := cs.eventBus.Subscribe(context.Background(), "replay-crash-before-write-vote", eventQuery, eventCh)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	go func() {
+		msg := readTimedWALMessage(t, voteMsg)
+		vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
 		for range eventCh {
-			msg := readTimedWALMessage(t, voteMsg)
-			vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
 			cs.mtx.Lock()
 			toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
 			toPV(cs.privValidator).LastSignature = vote.Vote.Signature
