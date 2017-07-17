@@ -30,6 +30,10 @@ var (
 	ErrInvalidProposalPOLRound  = errors.New("Error invalid proposal POL round")
 	ErrAddingVote               = errors.New("Error adding vote")
 	ErrVoteHeightMismatch       = errors.New("Error vote height mismatch")
+
+	// see testReplayCrashBeforeWriteVote in replay_test.go
+	afterPublishEventPolkaCallback            func(*ConsensusState)
+	afterPublishEventCompleteProposalCallback func(*ConsensusState)
 )
 
 //-----------------------------------------------------------------------------
@@ -924,6 +928,9 @@ func (cs *ConsensusState) enterPrevote(height int, round int) {
 	// fire event for how we got here
 	if cs.isProposalComplete() {
 		cs.eventBus.PublishEventCompleteProposal(cs.RoundStateEvent())
+		if afterPublishEventCompleteProposalCallback != nil {
+			afterPublishEventCompleteProposalCallback(cs)
+		}
 	} else {
 		// we received +2/3 prevotes for a future round
 		// TODO: catchup event?
@@ -1026,6 +1033,9 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 
 	// At this point +2/3 prevoted for a particular block or nil
 	cs.eventBus.PublishEventPolka(cs.RoundStateEvent())
+	if afterPublishEventPolkaCallback != nil {
+		afterPublishEventPolkaCallback(cs)
+	}
 
 	// the latest POLRound should be this round
 	polRound, _ := cs.Votes.POLInfo()

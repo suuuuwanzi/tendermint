@@ -246,25 +246,27 @@ func TestWALCrashBeforeWritePrecommit(t *testing.T) {
 	}
 }
 
+// NOTE: For every test (TestWALCrashBeforeWritePrevote,
+// TestWALCrashBeforeWritePrecommit) we set a callback, which will be invoked
+// right after publishing. We can't use cs.eventBus here because it is
+// executing in another thread and we can't guarantee the order of events. This
+// is clearly a hack and if you know another way around this, feel free to
+// create an issue.
 func testReplayCrashBeforeWriteVote(t *testing.T, thisCase *testCase, lineNum int, eventQuery tmpubsub.Query) {
 	// setup replay test where last message is a vote
 	cs, newBlockCh, voteMsg, walFile := setupReplayTest(t, thisCase, lineNum, false)
 
-	eventCh := make(chan interface{})
-	err := cs.eventBus.Subscribe(context.Background(), "replay-crash-before-write-vote", eventQuery, eventCh)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go func() {
+	// set last signature
+	afterPublishEventPolkaCallback = func(cs *ConsensusState) {
 		msg := readTimedWALMessage(t, voteMsg)
 		vote := msg.Msg.(msgInfo).Msg.(*VoteMessage)
-		for range eventCh {
-			cs.mtx.Lock()
-			toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
-			toPV(cs.privValidator).LastSignature = vote.Vote.Signature
-			cs.mtx.Unlock()
-		}
+		toPV(cs.privValidator).LastSignBytes = types.SignBytes(cs.state.ChainID, vote.Vote)
+		toPV(cs.privValidator).LastSignature = vote.Vote.Signature
+	}
+	afterPublishEventCompleteProposalCallback = afterPublishEventPolkaCallback
+	defer func() {
+		afterPublishEventPolkaCallback = nil
+		afterPublishEventCompleteProposalCallback = nil
 	}()
 
 	runReplayTest(t, cs, walFile, newBlockCh, thisCase, lineNum)
