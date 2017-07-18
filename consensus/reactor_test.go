@@ -267,8 +267,6 @@ func TestReactorWithTimeoutCommit(t *testing.T) {
 
 func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
 	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
-		defer wg.Done()
-
 		newBlockI := <-eventChans[j]
 		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
 		t.Logf("Got block height=%v validator=%v", newBlock.Height, j)
@@ -281,6 +279,8 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 				t.Fatal(err)
 			}
 		}
+
+		wg.Done()
 	}, css)
 }
 

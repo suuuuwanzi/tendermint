@@ -312,14 +312,14 @@ func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
 	stepsCh := make(chan interface{})
 	err := conR.eventBus.Subscribe(ctx, subscriber, types.EventQueryNewRoundStep, stepsCh)
 	if err != nil {
-		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryNewRoundStep)
+		return errors.Wrapf(err, "failed to subscribe %s to %s", subscriber, types.EventQueryNewRoundStep)
 	}
 
 	// votes
 	votesCh := make(chan interface{})
 	err = conR.eventBus.Subscribe(ctx, subscriber, types.EventQueryVote, votesCh)
 	if err != nil {
-		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryVote)
+		return errors.Wrapf(err, "failed to subscribe %s to %s", subscriber, types.EventQueryVote)
 	}
 
 	go func() {
