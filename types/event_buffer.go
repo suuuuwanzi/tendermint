@@ -13,12 +13,17 @@ type TxEventBuffer struct {
 
 // NewTxEventBuffer accepts an EventBus and returns a new buffer with the given
 // capacity.
-func NewTxEventBuffer(next *EventBus, capacity int) *TxEventBuffer {
+func NewTxEventBuffer(next TxEventPublisher, capacity int) *TxEventBuffer {
 	return &TxEventBuffer{
 		next:     next,
 		capacity: capacity,
 		events:   make([]EventDataTx, 0, capacity),
 	}
+}
+
+// Len returns the number of events cached.
+func (b TxEventBuffer) Len() int {
+	return len(b.events)
 }
 
 // PublishEventTx buffers an event to be fired upon finality.
