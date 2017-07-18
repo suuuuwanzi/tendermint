@@ -34,6 +34,9 @@ var (
 	// see testReplayCrashBeforeWriteVote in replay_test.go
 	afterPublishEventPolkaCallback            func(*ConsensusState)
 	afterPublishEventCompleteProposalCallback func(*ConsensusState)
+
+	// see TestValidatorSetChanges in reactor_test.go
+	afterPublishEventNewBlockTimeout = 0 * time.Millisecond
 )
 
 //-----------------------------------------------------------------------------
@@ -1273,6 +1276,10 @@ func (cs *ConsensusState) finalizeCommit(height int) {
 	err = txEventBuffer.Flush()
 	if err != nil {
 		cs.Logger.Error("Failed to flush event buffer", "err", err)
+	}
+
+	if afterPublishEventNewBlockTimeout > 0 {
+		time.Sleep(afterPublishEventNewBlockTimeout)
 	}
 
 	fail.Fail() // XXX

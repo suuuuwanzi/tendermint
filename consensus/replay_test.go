@@ -246,7 +246,7 @@ func TestWALCrashBeforeWritePrecommit(t *testing.T) {
 	}
 }
 
-// NOTE: For every test (TestWALCrashBeforeWritePrevote,
+// FIXME: For every test (TestWALCrashBeforeWritePrevote,
 // TestWALCrashBeforeWritePrecommit) we set a callback, which will be invoked
 // right after publishing. We can't use cs.eventBus here because it is
 // executing in another thread and we can't guarantee the order of events. This

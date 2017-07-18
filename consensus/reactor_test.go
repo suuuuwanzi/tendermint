@@ -146,6 +146,16 @@ func TestVotingPowerChange(t *testing.T) {
 }
 
 func TestValidatorSetChanges(t *testing.T) {
+	// FIXME: need to block css[j] until we check all txs! otherwise validator
+	// remove/add operations might not get executed in the next round and
+	// TestValidatorSetChanges will fail. This is clearly a hack and if you know
+	// a better way or want to work on this, please open an issue and we will
+	// discuss it.
+	afterPublishEventNewBlockTimeout = 100 * time.Millisecond
+	// defer func() {
+	// 	afterPublishEventNewBlockTimeout = 0 * time.Millisecond
+	// }()
+
 	nPeers := 7
 	nVals := 4
 	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(true), newPersistentDummy)
@@ -257,13 +267,9 @@ func TestReactorWithTimeoutCommit(t *testing.T) {
 
 func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
 	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
+		defer wg.Done()
+
 		newBlockI := <-eventChans[j]
-
-		// NOTE: need to block css[j].eventHub until we check all txs! otherwise
-		// validator remove/add operations might not get executed in this round and
-		// TestValidatorSetChanges will fail.
-		eventChans[j] <- struct{}{}
-
 		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
 		t.Logf("Got block height=%v validator=%v", newBlock.Height, j)
 		err := validateBlock(newBlock, activeVals)
@@ -271,13 +277,10 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 			t.Fatal(err)
 		}
 		for _, tx := range txs {
-			css[j].mempool.CheckTx(tx, nil)
+			if err = css[j].mempool.CheckTx(tx, nil); err != nil {
+				t.Fatal(err)
+			}
 		}
-
-		// see note above
-		<-eventChans[j]
-
-		wg.Done()
 	}, css)
 }
 
