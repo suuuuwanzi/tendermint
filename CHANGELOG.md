@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3 (TBD)
+
+IMPROVEMENTS:
+- rpc: updated json response to match http://www.jsonrpc.org/specification spec
+
 ## 0.10.2 (July 10, 2017)
 
 FEATURES:
