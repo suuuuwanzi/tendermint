@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3 (TBD)
+
+BREAKING CHANGES:
+- new events system using tmlibs/pubsub
+
 ## 0.10.2 (July 10, 2017)
 
 FEATURES:
