@@ -49,7 +49,7 @@ func ArrayToRequest(id string, method string, params []interface{}) (RPCRequest,
 //----------------------------------------
 // RESPONSE
 
-type RpcError struct {
+type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    string `json:"data,omitempty"`
@@ -59,7 +59,7 @@ type RPCResponse struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      string           `json:"id,omitempty"`
 	Result  *json.RawMessage `json:"result,omitempty"`
-	Error   *RpcError        `json:"error,omitempty"`
+	Error   *RPCError        `json:"error,omitempty"`
 }
 
 func NewRPCSuccessResponse(id string, res interface{}) RPCResponse {
@@ -82,7 +82,7 @@ func NewRPCErrorResponse(id string, code int, msg string, data string) RPCRespon
 	return RPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &RpcError{Code: code, Message: msg, Data: data},
+		Error:   &RPCError{Code: code, Message: msg, Data: data},
 	}
 }
 
