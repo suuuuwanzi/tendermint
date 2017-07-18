@@ -147,27 +147,31 @@ const (
 )
 
 var (
-	EventQueryBond             = tmquery.MustParse(EventTypeKey + "=" + EventBond)
-	EventQueryUnbond           = tmquery.MustParse(EventTypeKey + "=" + EventUnbond)
-	EventQueryRebond           = tmquery.MustParse(EventTypeKey + "=" + EventRebond)
-	EventQueryDupeout          = tmquery.MustParse(EventTypeKey + "=" + EventDupeout)
-	EventQueryFork             = tmquery.MustParse(EventTypeKey + "=" + EventFork)
-	EventQueryNewBlock         = tmquery.MustParse(EventTypeKey + "=" + EventNewBlock)
-	EventQueryNewBlockHeader   = tmquery.MustParse(EventTypeKey + "=" + EventNewBlockHeader)
-	EventQueryNewRound         = tmquery.MustParse(EventTypeKey + "=" + EventNewRound)
-	EventQueryNewRoundStep     = tmquery.MustParse(EventTypeKey + "=" + EventNewRoundStep)
-	EventQueryTimeoutPropose   = tmquery.MustParse(EventTypeKey + "=" + EventTimeoutPropose)
-	EventQueryCompleteProposal = tmquery.MustParse(EventTypeKey + "=" + EventCompleteProposal)
-	EventQueryPolka            = tmquery.MustParse(EventTypeKey + "=" + EventPolka)
-	EventQueryUnlock           = tmquery.MustParse(EventTypeKey + "=" + EventUnlock)
-	EventQueryLock             = tmquery.MustParse(EventTypeKey + "=" + EventLock)
-	EventQueryRelock           = tmquery.MustParse(EventTypeKey + "=" + EventRelock)
-	EventQueryTimeoutWait      = tmquery.MustParse(EventTypeKey + "=" + EventTimeoutWait)
-	EventQueryVote             = tmquery.MustParse(EventTypeKey + "=" + EventVote)
+	EventQueryBond             = queryForEvent(EventBond)
+	EventQueryUnbond           = queryForEvent(EventUnbond)
+	EventQueryRebond           = queryForEvent(EventRebond)
+	EventQueryDupeout          = queryForEvent(EventDupeout)
+	EventQueryFork             = queryForEvent(EventFork)
+	EventQueryNewBlock         = queryForEvent(EventNewBlock)
+	EventQueryNewBlockHeader   = queryForEvent(EventNewBlockHeader)
+	EventQueryNewRound         = queryForEvent(EventNewRound)
+	EventQueryNewRoundStep     = queryForEvent(EventNewRoundStep)
+	EventQueryTimeoutPropose   = queryForEvent(EventTimeoutPropose)
+	EventQueryCompleteProposal = queryForEvent(EventCompleteProposal)
+	EventQueryPolka            = queryForEvent(EventPolka)
+	EventQueryUnlock           = queryForEvent(EventUnlock)
+	EventQueryLock             = queryForEvent(EventLock)
+	EventQueryRelock           = queryForEvent(EventRelock)
+	EventQueryTimeoutWait      = queryForEvent(EventTimeoutWait)
+	EventQueryVote             = queryForEvent(EventVote)
 )
 
 func EventQueryTx(tx Tx) tmpubsub.Query {
-	return tmquery.MustParse(EventTypeKey + "=" + EventTx(tx))
+	return queryForEvent(EventTx(tx))
+}
+
+func queryForEvent(eventType string) tmpubsub.Query {
+	return tmquery.MustParse(EventTypeKey + "=" + eventType)
 }
 
 type TxEventPublisher interface {

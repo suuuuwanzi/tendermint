@@ -314,12 +314,6 @@ func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryNewRoundStep)
 	}
-	go func() {
-		for data := range stepsCh {
-			edrs := data.(types.TMEventData).Unwrap().(types.EventDataRoundState)
-			conR.broadcastNewRoundStep(edrs.RoundState.(*RoundState))
-		}
-	}()
 
 	// votes
 	votesCh := make(chan interface{})
@@ -327,17 +321,26 @@ func (conR *ConsensusReactor) broadcastNewRoundStepsAndVotes() error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to subscribe consensus-reactor to %s", types.EventQueryVote)
 	}
-	go func() {
-		for data := range votesCh {
-			edv := data.(types.TMEventData).Unwrap().(types.EventDataVote)
-			conR.broadcastHasVoteMessage(edv.Vote)
-		}
-	}()
 
-	// unsubscribe on exit
 	go func() {
-		<-conR.Quit
-		conR.eventBus.UnsubscribeAll(ctx, subscriber)
+		for {
+			select {
+			case data, ok := <-stepsCh:
+				if ok { // a receive from a closed channel returns the zero value immediately
+					edrs := data.(types.TMEventData).Unwrap().(types.EventDataRoundState)
+					conR.broadcastNewRoundStep(edrs.RoundState.(*RoundState))
+				}
+			case data, ok := <-votesCh:
+				if ok {
+					edv := data.(types.TMEventData).Unwrap().(types.EventDataVote)
+					conR.broadcastHasVoteMessage(edv.Vote)
+				}
+			case <-conR.Quit:
+				conR.eventBus.UnsubscribeAll(ctx, subscriber)
+				return
+			}
+
+		}
 	}()
 
 	return nil

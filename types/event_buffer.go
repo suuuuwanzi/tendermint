@@ -1,33 +1,33 @@
 package types
 
-const (
-	txEventBufferCapacity = 1000
-)
-
 // Interface assertions
 var _ TxEventPublisher = (*TxEventBuffer)(nil)
 
-// TxEventBuffer is a buffer of events.
+// TxEventBuffer is a buffer of events, which uses a slice to temporary store
+// events.
 type TxEventBuffer struct {
-	next   TxEventPublisher
-	events []EventDataTx
+	next     TxEventPublisher
+	capacity int
+	events   []EventDataTx
 }
 
-// NewTxEventBuffer returns a new buffer
-func NewTxEventBuffer(next *EventBus) *TxEventBuffer {
+// NewTxEventBuffer accepts an EventBus and returns a new buffer with the given
+// capacity.
+func NewTxEventBuffer(next *EventBus, capacity int) *TxEventBuffer {
 	return &TxEventBuffer{
-		next:   next,
-		events: make([]EventDataTx, 0, txEventBufferCapacity),
+		next:     next,
+		capacity: capacity,
+		events:   make([]EventDataTx, 0, capacity),
 	}
 }
 
-// PublishWithTags buffers an event to be fired upon finality.
+// PublishEventTx buffers an event to be fired upon finality.
 func (b *TxEventBuffer) PublishEventTx(e EventDataTx) error {
 	b.events = append(b.events, e)
 	return nil
 }
 
-// Flush fires events by running next.PublishWithTags on all cached events.
+// Flush publishes events by running next.PublishWithTags on all cached events.
 // Blocks. Clears cached events.
 func (b *TxEventBuffer) Flush() error {
 	for _, e := range b.events {
@@ -36,6 +36,6 @@ func (b *TxEventBuffer) Flush() error {
 			return err
 		}
 	}
-	b.events = make([]EventDataTx, 0, txEventBufferCapacity)
+	b.events = make([]EventDataTx, 0, b.capacity)
 	return nil
 }
