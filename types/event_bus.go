@@ -7,13 +7,15 @@ import (
 	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 )
 
-// EventBus is a common bus for all events going through the system.
+// EventBus is a common bus for all events going through the system. All calls
+// are proxied to underlying pubsub server. All events must be published using
+// EventBus to ensure correct data types.
 type EventBus struct {
 	cmn.BaseService
 	pubsub *tmpubsub.Server
 }
 
-// NewEventBus returns new event bus wrapping
+// NewEventBus returns a new event bus wrapping the pubsub server.
 func NewEventBus(pubsub *tmpubsub.Server) *EventBus {
 	b := &EventBus{pubsub: pubsub}
 	b.BaseService = *cmn.NewBaseService(nil, "EventBus", b)
