@@ -446,6 +446,7 @@ func (n *Node) DialSeeds(seeds []string) error {
 }
 
 // Defaults to tcp
+// TODO: deprecate. use cmn.ProtocolAndAddress (find elsewhere too)
 func ProtocolAndAddress(listenAddr string) (string, string) {
 	protocol, address := "tcp", listenAddr
 	parts := strings.SplitN(address, "://", 2)
