@@ -9,7 +9,6 @@ import (
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/types"
 	. "github.com/tendermint/tmlibs/common"
-	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 
 	"github.com/stretchr/testify/require"
 )
@@ -56,10 +55,8 @@ func TestByzantine(t *testing.T) {
 			css[i].doPrevote = func(height, round int) {}
 		}
 
-		pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
-		pubsub.SetLogger(logger.With("module", "pubsub", "validator", i))
-
-		eventBus := types.NewEventBus(pubsub)
+		eventBus := types.NewEventBus()
+		eventBus.SetLogger(logger.With("module", "events", "validator", i))
 		_, err := eventBus.Start()
 		require.NoError(t, err)
 		defer eventBus.Stop()

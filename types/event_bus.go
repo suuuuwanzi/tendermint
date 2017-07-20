@@ -4,8 +4,11 @@ import (
 	"context"
 
 	cmn "github.com/tendermint/tmlibs/common"
+	"github.com/tendermint/tmlibs/log"
 	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 )
+
+const defaultCapacity = 1000
 
 // EventBus is a common bus for all events going through the system. All calls
 // are proxied to underlying pubsub server. All events must be published using
@@ -15,11 +18,18 @@ type EventBus struct {
 	pubsub *tmpubsub.Server
 }
 
-// NewEventBus returns a new event bus wrapping the pubsub server.
-func NewEventBus(pubsub *tmpubsub.Server) *EventBus {
+// NewEventBus returns a new event bus.
+func NewEventBus() *EventBus {
+	// capacity could be exposed later if needed
+	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(defaultCapacity))
 	b := &EventBus{pubsub: pubsub}
 	b.BaseService = *cmn.NewBaseService(nil, "EventBus", b)
 	return b
+}
+
+func (b *EventBus) SetLogger(l log.Logger) {
+	b.BaseService.SetLogger(l)
+	b.pubsub.SetLogger(l.With("module", "pubsub"))
 }
 
 func (b *EventBus) OnStart() error {

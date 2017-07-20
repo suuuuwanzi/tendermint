@@ -29,7 +29,6 @@ import (
 	cmn "github.com/tendermint/tmlibs/common"
 	dbm "github.com/tendermint/tmlibs/db"
 	"github.com/tendermint/tmlibs/log"
-	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 
 	_ "net/http/pprof"
 )
@@ -189,9 +188,8 @@ func NewNode(config *cfg.Config, privValidator *types.PrivValidator, clientCreat
 		})
 	}
 
-	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
-	pubsub.SetLogger(logger.With("module", "pubsub"))
-	eventBus := types.NewEventBus(pubsub)
+	eventBus := types.NewEventBus()
+	eventBus.SetLogger(logger.With("module", "events"))
 
 	// services which will be publishing and/or subscribing for messages (events)
 	bcReactor.SetEventBus(eventBus)

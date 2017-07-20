@@ -45,8 +45,7 @@ func benchmarkEventBus(numClients int, randQueries bool, randEvents bool, b *tes
 	// for random* functions
 	rand.Seed(time.Now().Unix())
 
-	s := tmpubsub.NewServer(tmpubsub.BufferCapacity(1000))
-	eventBus := NewEventBus(s)
+	eventBus := NewEventBus()
 	eventBus.Start()
 	defer eventBus.Stop()
 

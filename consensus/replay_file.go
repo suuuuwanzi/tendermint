@@ -17,7 +17,6 @@ import (
 	"github.com/tendermint/tendermint/types"
 	cmn "github.com/tendermint/tmlibs/common"
 	dbm "github.com/tendermint/tmlibs/db"
-	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 )
 
 //--------------------------------------------------------
@@ -268,8 +267,7 @@ func newConsensusStateForReplay(config cfg.BaseConfig, csConfig *cfg.ConsensusCo
 		cmn.Exit(cmn.Fmt("Error starting proxy app conns: %v", err))
 	}
 
-	pubsub := tmpubsub.NewServer()
-	eventBus := types.NewEventBus(pubsub)
+	eventBus := types.NewEventBus()
 	if _, err := eventBus.Start(); err != nil {
 		cmn.Exit(cmn.Fmt("Failed to start event bus: %v", err))
 	}
