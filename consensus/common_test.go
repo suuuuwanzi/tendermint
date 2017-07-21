@@ -350,10 +350,11 @@ func randConsensusNet(nValidators int, testName string, tickerFunc func() Timeou
 func randConsensusNetWithPeers(nValidators, nPeers int, testName string, tickerFunc func() TimeoutTicker, appFunc func() abci.Application) []*ConsensusState {
 	genDoc, privVals := randGenesisDoc(nValidators, false, int64(testMinPower))
 	css := make([]*ConsensusState, nPeers)
+	logger := consensusLogger()
 	for i := 0; i < nPeers; i++ {
 		db := dbm.NewMemDB() // each state needs its own db
 		state := sm.MakeGenesisState(db, genDoc)
-		state.SetLogger(log.TestingLogger().With("module", "state"))
+		state.SetLogger(logger.With("module", "state", "validator", i))
 		state.Save()
 		thisConfig := ResetConfig(Fmt("%s_%d", testName, i))
 		ensureDir(path.Dir(thisConfig.Consensus.WalFile()), 0700) // dir for wal
@@ -367,7 +368,7 @@ func randConsensusNetWithPeers(nValidators, nPeers int, testName string, tickerF
 		}
 
 		css[i] = newConsensusStateWithConfig(thisConfig, state, privVal, appFunc())
-		css[i].SetLogger(log.TestingLogger())
+		css[i].SetLogger(logger.With("validator", i))
 		css[i].SetTimeoutTicker(tickerFunc())
 	}
 	return css

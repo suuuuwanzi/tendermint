@@ -142,19 +142,20 @@ func TestVotingPowerChange(t *testing.T) {
 }
 
 func TestValidatorSetChanges(t *testing.T) {
-	// FIXME: need to block css[j] until we check all txs! otherwise validator
-	// remove/add operations might not get executed in the next round and
-	// TestValidatorSetChanges will fail. This is clearly a hack and if you know
-	// a better way or want to work on this, please open an issue and we will
-	// discuss it.
-	afterPublishEventNewBlockTimeout = 100 * time.Millisecond
-	// defer func() {
-	// 	afterPublishEventNewBlockTimeout = 0 * time.Millisecond
-	// }()
-
 	nPeers := 7
 	nVals := 4
-	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(true), newPersistentDummy)
+	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(false), newPersistentDummy)
+
+	// FIXME: need to block css[j] (or wait for some time) until we check all
+	// txs! otherwise validator remove/add operations might not get executed in
+	// the next round and TestValidatorSetChanges will fail. This is clearly a
+	// hack and if you know a better way or want to work on this, please open an
+	// issue and we will discuss it.
+	for i := 0; i < nPeers; i++ {
+		css[i].config.TimeoutCommit = 1000
+		css[i].config.SkipTimeoutCommit = false
+	}
+
 	reactors, eventChans, eventBuses := startConsensusNet(t, css, nPeers)
 	defer stopConsensusNet(reactors, eventBuses)
 
@@ -287,6 +288,9 @@ func validateBlock(block *types.Block, activeVals map[string]struct{}) error {
 	}
 
 	for _, vote := range block.LastCommit.Precommits {
+		if vote == nil {
+			continue
+		}
 		if _, ok := activeVals[string(vote.ValidatorAddress)]; !ok {
 			return fmt.Errorf("Found vote for unactive validator %X", vote.ValidatorAddress)
 		}
