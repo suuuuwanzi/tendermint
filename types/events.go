@@ -11,27 +11,25 @@ import (
 
 // Reserved event types
 const (
-	EventBond    = "Bond"
-	EventUnbond  = "Unbond"
-	EventRebond  = "Rebond"
-	EventDupeout = "Dupeout"
-	EventFork    = "Fork"
-
+	EventBond             = "Bond"
+	EventCompleteProposal = "CompleteProposal"
+	EventDupeout          = "Dupeout"
+	EventFork             = "Fork"
+	EventLock             = "Lock"
 	EventNewBlock         = "NewBlock"
 	EventNewBlockHeader   = "NewBlockHeader"
 	EventNewRound         = "NewRound"
 	EventNewRoundStep     = "NewRoundStep"
-	EventTimeoutPropose   = "TimeoutPropose"
-	EventCompleteProposal = "CompleteProposal"
 	EventPolka            = "Polka"
-	EventUnlock           = "Unlock"
-	EventLock             = "Lock"
+	EventRebond           = "Rebond"
 	EventRelock           = "Relock"
+	EventTimeoutPropose   = "TimeoutPropose"
 	EventTimeoutWait      = "TimeoutWait"
+	EventTx               = "Tx"
+	EventUnbond           = "Unbond"
+	EventUnlock           = "Unlock"
 	EventVote             = "Vote"
 )
-
-func EventTx(tx Tx) string { return fmt.Sprintf("Tx:%X", tx.Hash()) }
 
 ///////////////////////////////////////////////////////////////////////////////
 // ENCODING / DECODING
@@ -144,6 +142,9 @@ func (_ EventDataVote) AssertIsTMEventData()           {}
 const (
 	// EventTypeKey is a reserved key, used to specify event type in tags.
 	EventTypeKey = "tm.events.type"
+	// TxHashKey is a reserved key, used to specify transaction's hash.
+	// see EventBus#PublishEventTx
+	TxHashKey = "tx.hash"
 )
 
 var (
@@ -167,11 +168,11 @@ var (
 )
 
 func EventQueryTx(tx Tx) tmpubsub.Query {
-	return queryForEvent(EventTx(tx))
+	return tmquery.MustParse(fmt.Sprintf("%s='%s' AND %s='%X'", EventTypeKey, EventTx, TxHashKey, tx.Hash()))
 }
 
 func queryForEvent(eventType string) tmpubsub.Query {
-	return tmquery.MustParse(EventTypeKey + "=" + eventType)
+	return tmquery.MustParse(fmt.Sprintf("%s='%s'", EventTypeKey, eventType))
 }
 
 type TxEventPublisher interface {

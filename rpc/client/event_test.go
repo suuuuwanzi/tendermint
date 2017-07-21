@@ -77,7 +77,7 @@ func TestTxEventsSentWithBroadcastTxAsync(t *testing.T) {
 
 		// make the tx
 		_, _, tx := merktest.MakeTxKV()
-		evtTyp := types.EventTx(types.Tx(tx))
+		evtTyp := types.EventTx
 
 		// send async
 		txres, err := c.BroadcastTxAsync(tx)
@@ -110,7 +110,7 @@ func TestTxEventsSentWithBroadcastTxSync(t *testing.T) {
 
 		// make the tx
 		_, _, tx := merktest.MakeTxKV()
-		evtTyp := types.EventTx(types.Tx(tx))
+		evtTyp := types.EventTx
 
 		// send sync
 		txres, err := c.BroadcastTxSync(tx)

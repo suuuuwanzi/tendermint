@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"fmt"
 
 	cmn "github.com/tendermint/tmlibs/common"
 	"github.com/tendermint/tmlibs/log"
@@ -81,7 +82,12 @@ func (b *EventBus) PublishEventVote(vote EventDataVote) error {
 }
 
 func (b *EventBus) PublishEventTx(tx EventDataTx) error {
-	return b.publish(EventTx(tx.Tx), TMEventData{tx})
+	if b.pubsub != nil {
+		// no explicit deadline for publishing events
+		ctx := context.Background()
+		b.pubsub.PublishWithTags(ctx, TMEventData{tx}, map[string]interface{}{EventTypeKey: EventTx, TxHashKey: fmt.Sprintf("%X", tx.Tx.Hash())})
+	}
+	return nil
 }
 
 //--- EventDataRoundState events
