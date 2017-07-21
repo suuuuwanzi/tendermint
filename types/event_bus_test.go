@@ -45,7 +45,7 @@ func benchmarkEventBus(numClients int, randQueries bool, randEvents bool, b *tes
 	// for random* functions
 	rand.Seed(time.Now().Unix())
 
-	eventBus := NewEventBus()
+	eventBus := NewEventBusWithBufferCapacity(0) // set buffer capacity to 0 so we are not testing cache
 	eventBus.Start()
 	defer eventBus.Stop()
 

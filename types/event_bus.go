@@ -20,8 +20,13 @@ type EventBus struct {
 
 // NewEventBus returns a new event bus.
 func NewEventBus() *EventBus {
+	return NewEventBusWithBufferCapacity(defaultCapacity)
+}
+
+// NewEventBusWithBufferCapacity returns a new event bus with the given buffer capacity.
+func NewEventBusWithBufferCapacity(cap int) *EventBus {
 	// capacity could be exposed later if needed
-	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(defaultCapacity))
+	pubsub := tmpubsub.NewServer(tmpubsub.BufferCapacity(cap))
 	b := &EventBus{pubsub: pubsub}
 	b.BaseService = *cmn.NewBaseService(nil, "EventBus", b)
 	return b
