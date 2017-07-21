@@ -144,17 +144,7 @@ func TestVotingPowerChange(t *testing.T) {
 func TestValidatorSetChanges(t *testing.T) {
 	nPeers := 7
 	nVals := 4
-	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(false), newPersistentDummy)
-
-	// FIXME: need to block css[j] (or wait for some time) until we check all
-	// txs! otherwise validator remove/add operations might not get executed in
-	// the next round and TestValidatorSetChanges will fail. This is clearly a
-	// hack and if you know a better way or want to work on this, please open an
-	// issue and we will discuss it.
-	for i := 0; i < nPeers; i++ {
-		css[i].config.TimeoutCommit = 1000
-		css[i].config.SkipTimeoutCommit = false
-	}
+	css := randConsensusNetWithPeers(nVals, nPeers, "consensus_val_set_changes_test", newMockTickerFunc(true), newPersistentDummy)
 
 	reactors, eventChans, eventBuses := startConsensusNet(t, css, nPeers)
 	defer stopConsensusNet(reactors, eventBuses)
@@ -195,7 +185,7 @@ func TestValidatorSetChanges(t *testing.T) {
 
 	// wait till everyone makes block 5
 	// it includes the commit for block 4, which should have the updated validator set
-	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
+	waitForBlockWithUpdatedValsAndValidateIt(t, nPeers, activeVals, eventChans, css)
 
 	//---------------------------------------------------------------------------
 	t.Log("---------------------------- Testing changing the voting power of one validator")
@@ -207,7 +197,7 @@ func TestValidatorSetChanges(t *testing.T) {
 	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css, updateValidatorTx1)
 	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
 	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
-	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
+	waitForBlockWithUpdatedValsAndValidateIt(t, nPeers, activeVals, eventChans, css)
 
 	if css[nVals].GetRoundState().LastValidators.TotalVotingPower() == previousTotalVotingPower {
 		t.Errorf("expected voting power to change (before: %d, after: %d)", previousTotalVotingPower, css[nVals].GetRoundState().LastValidators.TotalVotingPower())
@@ -227,7 +217,7 @@ func TestValidatorSetChanges(t *testing.T) {
 	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
 	activeVals[string(newValidatorPubKey2.Address())] = struct{}{}
 	activeVals[string(newValidatorPubKey3.Address())] = struct{}{}
-	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
+	waitForBlockWithUpdatedValsAndValidateIt(t, nPeers, activeVals, eventChans, css)
 
 	//---------------------------------------------------------------------------
 	t.Log("---------------------------- Testing removing two validators at once")
@@ -240,7 +230,7 @@ func TestValidatorSetChanges(t *testing.T) {
 	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
 	delete(activeVals, string(newValidatorPubKey2.Address()))
 	delete(activeVals, string(newValidatorPubKey3.Address()))
-	waitForAndValidateBlock(t, nPeers, activeVals, eventChans, css)
+	waitForBlockWithUpdatedValsAndValidateIt(t, nPeers, activeVals, eventChans, css)
 }
 
 // Check we can make blocks with skip_timeout_commit=false
@@ -276,6 +266,26 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 				t.Fatal(err)
 			}
 		}
+		wg.Done()
+	}, css)
+}
+
+func waitForBlockWithUpdatedValsAndValidateIt(t *testing.T, n int, activeVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
+	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
+	receive:
+		newBlockI := <-eventChans[j]
+		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
+		if newBlock.LastCommit.Size() == len(activeVals) {
+			t.Logf("Block with new validators height=%v validator=%v", newBlock.Height, j)
+		} else {
+			t.Logf("Block with no new validators height=%v validator=%v. Skipping...", newBlock.Height, j)
+			goto receive
+		}
+
+		err := validateBlock(newBlock, activeVals)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		wg.Done()
 	}, css)
@@ -288,9 +298,6 @@ func validateBlock(block *types.Block, activeVals map[string]struct{}) error {
 	}
 
 	for _, vote := range block.LastCommit.Precommits {
-		if vote == nil {
-			continue
-		}
 		if _, ok := activeVals[string(vote.ValidatorAddress)]; !ok {
 			return fmt.Errorf("Found vote for unactive validator %X", vote.ValidatorAddress)
 		}
