@@ -90,7 +90,7 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T) {
 // failure.
 func TestWALCrash(t *testing.T) {
 	walPaniced := make(chan error)
-	wal := &randomlyCrashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool)}
+	crashingWal := &randomlyCrashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool)}
 
 	i := 0
 LOOP:
@@ -103,15 +103,16 @@ LOOP:
 		walFile := cs.config.WalFile()
 		os.Remove(walFile)
 
-		_, err := cs.Start()
+		csWal, err := cs.OpenWAL(walFile)
 		require.NoError(t, err)
 
 		// set randomlyCrashingWAL
-		wal.mtx.Lock()
-		wal.cs = cs
-		wal.next = cs.wal
-		wal.mtx.Unlock()
-		cs.SetWAL(wal)
+		crashingWal.cs = cs
+		crashingWal.next = csWal
+		cs.wal = crashingWal
+
+		_, err = cs.Start()
+		require.NoError(t, err)
 
 		select {
 		case err := <-walPaniced:

@@ -118,11 +118,11 @@ func (wal *baseWAL) WriteEndHeight(height int) {
 	}
 }
 
-type discardWAL struct{}
+type nilWAL struct{}
 
-func (discardWAL) Save(m WALMessage)         {}
-func (discardWAL) Group() *auto.Group        { return nil }
-func (discardWAL) WriteEndHeight(height int) {}
-func (discardWAL) Start() (bool, error)      { return true, nil }
-func (discardWAL) Stop() bool                { return true }
-func (discardWAL) Wait()                     {}
+func (nilWAL) Save(m WALMessage)         {}
+func (nilWAL) Group() *auto.Group        { return nil }
+func (nilWAL) WriteEndHeight(height int) {}
+func (nilWAL) Start() (bool, error)      { return true, nil }
+func (nilWAL) Stop() bool                { return true }
+func (nilWAL) Wait()                     {}

@@ -246,7 +246,7 @@ func NewConsensusState(config *cfg.ConsensusConfig, state *sm.State, proxyAppCon
 		internalMsgQueue: make(chan msgInfo, msgQueueSize),
 		timeoutTicker:    NewTimeoutTicker(),
 		done:             make(chan struct{}),
-		wal:              discardWAL{},
+		wal:              nilWAL{},
 	}
 	// set function defaults (may be overwritten before calling Start)
 	cs.decideProposal = cs.defaultDecideProposal
@@ -335,10 +335,16 @@ func (cs *ConsensusState) LoadCommit(height int) *types.Commit {
 // It loads the latest state via the WAL, and starts the timeout and receive routines.
 func (cs *ConsensusState) OnStart() error {
 
-	walFile := cs.config.WalFile()
-	if err := cs.OpenWAL(walFile); err != nil {
-		cs.Logger.Error("Error loading ConsensusState wal", "err", err.Error())
-		return err
+	// we may set the WAL in testing before calling Start,
+	// so only OpenWAL if its still the nilWAL
+	if _, ok := cs.wal.(nilWAL); ok {
+		walFile := cs.config.WalFile()
+		wal, err := cs.OpenWAL(walFile)
+		if err != nil {
+			cs.Logger.Error("Error loading ConsensusState wal", "err", err.Error())
+			return err
+		}
+		cs.wal = wal // do we need a lock for this ?
 	}
 
 	// we need the timeoutRoutine for replay so
@@ -393,25 +399,22 @@ func (cs *ConsensusState) Wait() {
 }
 
 // OpenWAL opens a file to log all consensus messages and timeouts for deterministic accountability
-func (cs *ConsensusState) OpenWAL(walFile string) (err error) {
-	err = cmn.EnsureDir(path.Dir(walFile), 0700)
+func (cs *ConsensusState) OpenWAL(walFile string) (WAL, error) {
+	err := cmn.EnsureDir(path.Dir(walFile), 0700)
 	if err != nil {
 		cs.Logger.Error("Error ensuring ConsensusState wal dir", "err", err.Error())
-		return err
+		return nil, err
 	}
 
-	cs.mtx.Lock()
-	defer cs.mtx.Unlock()
 	wal, err := NewWAL(walFile, cs.config.WalLight)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	wal.SetLogger(cs.Logger.With("wal", walFile))
 	if _, err := wal.Start(); err != nil {
-		return err
+		return nil, err
 	}
-	cs.wal = wal
-	return nil
+	return wal, nil
 }
 
 //------------------------------------------------------------
@@ -627,22 +630,16 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 
 		select {
 		case mi = <-cs.peerMsgQueue:
-			cs.mtx.Lock()
 			cs.wal.Save(mi)
-			cs.mtx.Unlock()
 			// handles proposals, block parts, votes
 			// may generate internal events (votes, complete proposals, 2/3 majorities)
 			cs.handleMsg(mi, rs)
 		case mi = <-cs.internalMsgQueue:
-			cs.mtx.Lock()
 			cs.wal.Save(mi)
-			cs.mtx.Unlock()
 			// handles proposals, block parts, votes
 			cs.handleMsg(mi, rs)
 		case ti := <-cs.timeoutTicker.Chan(): // tockChan:
-			cs.mtx.Lock()
 			cs.wal.Save(ti)
-			cs.mtx.Unlock()
 			// if the timeout is relevant to the rs
 			// go to the next step
 			cs.handleTimeout(ti, rs)
@@ -653,9 +650,7 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 			// priv_val tracks LastSig
 
 			// close wal now that we're done writing to it
-			cs.mtx.Lock()
 			cs.wal.Stop()
-			cs.mtx.Unlock()
 
 			close(cs.done)
 			return
@@ -665,12 +660,6 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 
 func (cs *ConsensusState) StepString() string {
 	return cs.Step.String()
-}
-
-func (cs *ConsensusState) SetWAL(wal WAL) {
-	cs.mtx.Lock()
-	cs.wal = wal
-	cs.mtx.Unlock()
 }
 
 // state transitions on complete-proposal, 2/3-any, 2/3-one
