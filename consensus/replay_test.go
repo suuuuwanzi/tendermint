@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +69,7 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T) {
 	defer func() {
 		cs.Stop()
 		cs.Wait()
+		cs = nil
 	}()
 
 	// This is just a signal that we haven't halted; its not something contained
@@ -89,15 +89,101 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T) {
 // TestWALCrash uses ramdomly crashing WAL to test we can recover from any WAL
 // failure.
 func TestWALCrash(t *testing.T) {
-	walPaniced := make(chan error)
+	testCases := []struct {
+		name   string
+		initFn func(*ConsensusState, context.Context)
+		doneFn func(*ConsensusState) bool
+	}{
+		{"empty block",
+			func(cs *ConsensusState, ctx context.Context) {},
+			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+		{"non-empty block",
+			func(cs *ConsensusState, ctx context.Context) {
+				i := 0
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						cs.mtx.Lock()
+						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
+						cs.mtx.Unlock()
+						i++
+					}
+				}
+			},
+			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+		{"non-empty block with smaller part size",
+			func(cs *ConsensusState, ctx context.Context) {
+				// cs.mtx.Lock()
+				// cs.config.BlockPartSize = 512
+				// cs.mtx.Unlock()
+				i := 0
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						cs.mtx.Lock()
+						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
+						cs.mtx.Unlock()
+						i++
+					}
+				}
+			},
+			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+		{"many blocks",
+			func(cs *ConsensusState, ctx context.Context) {
+				i := 0
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						cs.mtx.Lock()
+						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
+						cs.mtx.Unlock()
+						i++
+					}
+				}
+			},
+			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 3 }},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			crashWALandCheckLiveness(t, tc.initFn, tc.doneFn)
+		})
+	}
+}
+
+func crashWALandCheckLiveness(t *testing.T, initFn func(*ConsensusState, context.Context), doneFn func(*ConsensusState) bool) {
+	walPaniced := make(chan error, 10)
 	crashingWal := &randomlyCrashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool)}
 
-	i := 0
+	i := 1
 LOOP:
 	for {
-		i++
 		t.Logf("====== LOOP %d\n", i)
 		cs := fixedConsensusStateDummy(consensusReplayConfig, log.NewNopLogger())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go initFn(cs, ctx)
+
+		done := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+					if doneFn(cs) {
+						close(done)
+						return
+					}
+				}
+			}
+		}()
 
 		// clean WAL file
 		walFile := cs.config.WalFile()
@@ -114,6 +200,8 @@ LOOP:
 		_, err = cs.Start()
 		require.NoError(t, err)
 
+		i++
+
 		select {
 		case err := <-walPaniced:
 			t.Logf("WAL paniced: %v", err)
@@ -123,8 +211,11 @@ LOOP:
 
 			// unblock consensus state and stop it
 			cs.Stop()
+
+			cancel()
 		case <-time.After(10 * time.Second):
-			t.Log("No crashes during 10 sec., all good")
+			t.Fatal("doneFn never returned true")
+		case <-done:
 			break LOOP
 		}
 	}
@@ -136,7 +227,6 @@ LOOP:
 type randomlyCrashingWAL struct {
 	next       WAL
 	cs         *ConsensusState
-	mtx        sync.Mutex
 	panicCh    chan error
 	panicedFor map[string]bool
 }
@@ -144,10 +234,7 @@ type randomlyCrashingWAL struct {
 // Save simulate WAL's crashing by sending an error to panicCh and then
 // exiting the receiveRoutine.
 func (w *randomlyCrashingWAL) Save(m WALMessage) {
-	// FIXME better way to get the consensus step?
-	w.mtx.Lock()
 	step := w.cs.StepString()
-	w.mtx.Unlock()
 	// key is a combination of WALMessage type : msgInfo msg type : consensus step
 	var key string
 	switch m.(type) {
