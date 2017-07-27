@@ -117,8 +117,6 @@ LOOP:
 		case err := <-walPaniced:
 			t.Logf("WAL paniced: %v", err)
 
-			time.Sleep(100 * time.Millisecond)
-
 			// make sure we can make blocks after a crash
 			startNewConsensusStateAndWaitForBlock(t)
 
