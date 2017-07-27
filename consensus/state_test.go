@@ -241,6 +241,8 @@ func TestFullRound1(t *testing.T) {
 	cs, vss := randConsensusState(1)
 	height, round := cs.Height, cs.Round
 
+	// NOTE: voteChan cap of 0 ensures we can complete this
+	// before consensus can move to the next height (and cause a race condition)
 	voteCh := make(chan interface{}, 0)
 	err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryVote, voteCh)
 	require.NoError(t, err)
@@ -256,8 +258,6 @@ func TestFullRound1(t *testing.T) {
 	propBlockHash := re.(types.TMEventData).Unwrap().(types.EventDataRoundState).RoundState.(*RoundState).ProposalBlock.Hash()
 
 	<-voteCh // wait for prevote
-	// NOTE: voteChan cap of 0 ensures we can complete this
-	// before consensus can move to the next height (and cause a race condition)
 	validatePrevote(t, cs, round, vss[0], propBlockHash)
 
 	<-voteCh // wait for precommit

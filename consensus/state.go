@@ -220,7 +220,7 @@ type ConsensusState struct {
 
 	// a Write-Ahead Log ensures we can recover from any kind of crash
 	// and helps us avoid signing conflicting votes
-	wal        *WAL
+	wal        WAL
 	replayMode bool // so we don't log signing errors during replay
 
 	// for tests where we want to limit the number of transitions the state makes
@@ -246,6 +246,7 @@ func NewConsensusState(config *cfg.ConsensusConfig, state *sm.State, proxyAppCon
 		internalMsgQueue: make(chan msgInfo, msgQueueSize),
 		timeoutTicker:    NewTimeoutTicker(),
 		done:             make(chan struct{}),
+		wal:              discardWAL{},
 	}
 	// set function defaults (may be overwritten before calling Start)
 	cs.decideProposal = cs.defaultDecideProposal
@@ -379,7 +380,7 @@ func (cs *ConsensusState) OnStop() {
 	cs.timeoutTicker.Stop()
 
 	// Make BaseService.Wait() wait until cs.wal.Wait()
-	if cs.wal != nil && cs.IsRunning() {
+	if cs.IsRunning() {
 		cs.wal.Wait()
 	}
 }
@@ -626,16 +627,22 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 
 		select {
 		case mi = <-cs.peerMsgQueue:
+			cs.mtx.Lock()
 			cs.wal.Save(mi)
+			cs.mtx.Unlock()
 			// handles proposals, block parts, votes
 			// may generate internal events (votes, complete proposals, 2/3 majorities)
 			cs.handleMsg(mi, rs)
 		case mi = <-cs.internalMsgQueue:
+			cs.mtx.Lock()
 			cs.wal.Save(mi)
+			cs.mtx.Unlock()
 			// handles proposals, block parts, votes
 			cs.handleMsg(mi, rs)
 		case ti := <-cs.timeoutTicker.Chan(): // tockChan:
+			cs.mtx.Lock()
 			cs.wal.Save(ti)
+			cs.mtx.Unlock()
 			// if the timeout is relevant to the rs
 			// go to the next step
 			cs.handleTimeout(ti, rs)
@@ -646,14 +653,24 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 			// priv_val tracks LastSig
 
 			// close wal now that we're done writing to it
-			if cs.wal != nil {
-				cs.wal.Stop()
-			}
+			cs.mtx.Lock()
+			cs.wal.Stop()
+			cs.mtx.Unlock()
 
 			close(cs.done)
 			return
 		}
 	}
+}
+
+func (cs *ConsensusState) StepString() string {
+	return cs.Step.String()
+}
+
+func (cs *ConsensusState) SetWAL(wal WAL) {
+	cs.mtx.Lock()
+	cs.wal = wal
+	cs.mtx.Unlock()
 }
 
 // state transitions on complete-proposal, 2/3-any, 2/3-one
@@ -1033,9 +1050,6 @@ func (cs *ConsensusState) enterPrecommit(height int, round int) {
 
 	// At this point +2/3 prevoted for a particular block or nil
 	cs.eventBus.PublishEventPolka(cs.RoundStateEvent())
-	if afterPublishEventPolkaCallback != nil {
-		afterPublishEventPolkaCallback(cs)
-	}
 
 	// the latest POLRound should be this round
 	polRound, _ := cs.Votes.POLInfo()
@@ -1239,9 +1253,7 @@ func (cs *ConsensusState) finalizeCommit(height int) {
 	// WAL replay for blocks with an #ENDHEIGHT
 	// As is, ConsensusState should not be started again
 	// until we successfully call ApplyBlock (ie. here or in Handshake after restart)
-	if cs.wal != nil {
-		cs.wal.writeEndHeight(height)
-	}
+	cs.wal.WriteEndHeight(height)
 
 	fail.Fail() // XXX
 

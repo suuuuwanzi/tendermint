@@ -272,13 +272,13 @@ func loadPrivValidator(config *cfg.Config) *types.PrivValidator {
 	return privValidator
 }
 
-func fixedConsensusStateDummy() *ConsensusState {
+func fixedConsensusStateDummy(config *cfg.Config, logger log.Logger) *ConsensusState {
 	stateDB := dbm.NewMemDB()
 	state := sm.MakeGenesisStateFromFile(stateDB, config.GenesisFile())
-	state.SetLogger(log.TestingLogger().With("module", "state"))
+	state.SetLogger(logger.With("module", "state"))
 	privValidator := loadPrivValidator(config)
 	cs := newConsensusState(state, privValidator, dummy.NewDummyApplication())
-	cs.SetLogger(log.TestingLogger())
+	cs.SetLogger(logger)
 	return cs
 }
 
