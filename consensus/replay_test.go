@@ -114,16 +114,17 @@ func TestWALCrash(t *testing.T) {
 			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
 		{"non-empty block with smaller part size",
 			func(cs *ConsensusState, ctx context.Context) {
-				// cs.mtx.Lock()
-				// cs.config.BlockPartSize = 512
-				// cs.mtx.Unlock()
+				// FIXME easy way to setup BlockPartSize for cs ?
+				// consensusReplayConfig.Consensus.BlockPartSize = 512
 				i := 0
 				for {
 					select {
 					case <-ctx.Done():
+						// restore old value
+						// consensusReplayConfig.Consensus.BlockPartSize = 65536
 						return
 					default:
-						cs.mtx.Lock()
+						cs.mtx.Lock() // FIXME is it possible to remove mutexes?
 						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
 						cs.mtx.Unlock()
 						i++
