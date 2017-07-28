@@ -57,11 +57,16 @@ var data_dir = path.Join(cmn.GoPath, "src/github.com/tendermint/tendermint/conse
 // and which ones we need the wal for - then we'd also be able to only flush the
 // wal writer when we need to, instead of with every message.
 
-func startNewConsensusStateAndWaitForBlock(t *testing.T) {
-	cs := fixedConsensusStateDummy(consensusReplayConfig, log.TestingLogger())
+func startNewConsensusStateAndWaitForBlock(t *testing.T, lastBlockHeight int, blockDB dbm.DB, stateDB dbm.DB) {
+	logger := log.TestingLogger()
+	state := sm.GetState(stateDB, consensusReplayConfig.GenesisFile())
+	state.SetLogger(logger.With("module", "state"))
+	privValidator := loadPrivValidator(consensusReplayConfig)
+	cs := newConsensusStateWithConfigAndBlockStore(consensusReplayConfig, state, privValidator, dummy.NewDummyApplication(), blockDB)
+	cs.SetLogger(logger)
 
 	bytes, _ := ioutil.ReadFile(cs.config.WalFile())
-	t.Logf("====== WAL: \n\r%s\n", bytes)
+	fmt.Printf("====== WAL: \n\r%s\n", bytes)
 
 	_, err := cs.Start()
 	require.NoError(t, err)
@@ -85,119 +90,85 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T) {
 	}
 }
 
-// TestWALCrash uses ramdomly crashing WAL to test we can recover from any WAL
-// failure.
+func sendTxs(cs *ConsensusState, ctx context.Context) {
+	i := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			cs.mempool.CheckTx([]byte{byte(i)}, nil)
+			i++
+		}
+	}
+}
+
+// TestWALCrash uses crashing WAL to test we can recover from any WAL failure.
 func TestWALCrash(t *testing.T) {
 	testCases := []struct {
-		name   string
-		initFn func(*ConsensusState, context.Context)
-		doneFn func(*ConsensusState) bool
+		name         string
+		initFn       func(*ConsensusState, context.Context)
+		heightToStop int
 	}{
 		{"empty block",
 			func(cs *ConsensusState, ctx context.Context) {},
-			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+			1},
 		{"non-empty block",
-			func(cs *ConsensusState, ctx context.Context) {
-				i := 0
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-						cs.mtx.Lock()
-						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
-						cs.mtx.Unlock()
-						i++
-					}
-				}
-			},
-			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+			sendTxs,
+			1},
 		{"non-empty block with smaller part size",
 			func(cs *ConsensusState, ctx context.Context) {
-				// FIXME easy way to setup BlockPartSize for cs ?
-				// consensusReplayConfig.Consensus.BlockPartSize = 512
-				i := 0
-				for {
-					select {
-					case <-ctx.Done():
-						// restore old value
-						// consensusReplayConfig.Consensus.BlockPartSize = 65536
-						return
-					default:
-						cs.mtx.Lock() // FIXME is it possible to remove mutexes?
-						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
-						cs.mtx.Unlock()
-						i++
-					}
-				}
+				consensusReplayConfig.Consensus.BlockPartSize = 512
+				sendTxs(cs, ctx)
 			},
-			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 1 }},
+			1},
 		{"many blocks",
-			func(cs *ConsensusState, ctx context.Context) {
-				i := 0
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-						cs.mtx.Lock()
-						cs.mempool.CheckTx([]byte{byte(cs.Height), byte(i)}, nil)
-						cs.mtx.Unlock()
-						i++
-					}
-				}
-			},
-			func(cs *ConsensusState) bool { cs.mtx.Lock(); defer cs.mtx.Unlock(); return cs.Height > 3 }},
+			sendTxs,
+			3},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			crashWALandCheckLiveness(t, tc.initFn, tc.doneFn)
+			crashWALandCheckLiveness(t, tc.initFn, tc.heightToStop)
 		})
 	}
 }
 
-func crashWALandCheckLiveness(t *testing.T, initFn func(*ConsensusState, context.Context), doneFn func(*ConsensusState) bool) {
-	walPaniced := make(chan error, 10)
-	crashingWal := &randomlyCrashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool)}
+func crashWALandCheckLiveness(t *testing.T, initFn func(*ConsensusState, context.Context), heightToStop int) {
+	walPaniced := make(chan error)
+	crashingWal := &crashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool), heightToStop: heightToStop}
 
 	i := 1
 LOOP:
 	for {
-		t.Logf("====== LOOP %d\n", i)
-		cs := fixedConsensusStateDummy(consensusReplayConfig, log.NewNopLogger())
+		fmt.Printf("====== LOOP %d\n", i)
 
+		// create consensus state from a clean slate
+		logger := log.NewNopLogger()
+		stateDB := dbm.NewMemDB()
+		state := sm.MakeGenesisStateFromFile(stateDB, consensusReplayConfig.GenesisFile())
+		state.SetLogger(logger.With("module", "state"))
+		privValidator := loadPrivValidator(consensusReplayConfig)
+		blockDB := dbm.NewMemDB()
+		cs := newConsensusStateWithConfigAndBlockStore(consensusReplayConfig, state, privValidator, dummy.NewDummyApplication(), blockDB)
+		cs.SetLogger(logger)
+
+		// start sending transactions
 		ctx, cancel := context.WithCancel(context.Background())
 		go initFn(cs, ctx)
 
-		done := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(100 * time.Millisecond):
-					if doneFn(cs) {
-						close(done)
-						return
-					}
-				}
-			}
-		}()
-
-		// clean WAL file
+		// clean up WAL file from the previous iteration
 		walFile := cs.config.WalFile()
 		os.Remove(walFile)
 
-		// open WAL file
+		// set crashing WAL
 		csWal, err := cs.OpenWAL(walFile)
 		require.NoError(t, err)
-
-		// set randomlyCrashingWAL
 		crashingWal.cs = cs
 		crashingWal.next = csWal
 		cs.wal = crashingWal
 
+		// start consensus state
 		_, err = cs.Start()
 		require.NoError(t, err)
 
@@ -208,58 +179,91 @@ LOOP:
 			t.Logf("WAL paniced: %v", err)
 
 			// make sure we can make blocks after a crash
-			startNewConsensusStateAndWaitForBlock(t)
+			startNewConsensusStateAndWaitForBlock(t, cs.Height, blockDB, stateDB)
 
-			// unblock consensus state and stop it
+			// stop consensus state and transactions sender (initFn)
 			cs.Stop()
-
 			cancel()
+
+			// if we reached the required height, exit
+			if _, ok := err.(ReachedHeightToStopError); ok {
+				break LOOP
+			}
 		case <-time.After(10 * time.Second):
-			t.Fatal("doneFn never returned true")
-		case <-done:
-			break LOOP
+			t.Fatal("WAL did not panic for 10 seconds (check the log)")
 		}
 	}
 }
 
-// randomlyCrashingWAL is a WAL which crashes or rather simulates a crash during
-// Save (before and after). It records a consensus step so it won't fail the
-// second time for the same step.
-type randomlyCrashingWAL struct {
-	next       WAL
-	cs         *ConsensusState
-	panicCh    chan error
-	panicedFor map[string]bool
+// crashingWAL is a WAL which crashes or rather simulates a crash during Save
+// (before and after). It records a consensus step so it won't fail the second
+// time for the same step.
+type crashingWAL struct {
+	next         WAL
+	cs           *ConsensusState
+	panicCh      chan error
+	panicedFor   map[string]bool
+	heightToStop int
 }
 
-// Save simulate WAL's crashing by sending an error to panicCh and then
-// exiting the receiveRoutine.
-func (w *randomlyCrashingWAL) Save(m WALMessage) {
+// WALWriteError indicates a WAL crash.
+type WALWriteError struct {
+	msg string
+}
+
+func (e WALWriteError) Error() string {
+	return e.msg
+}
+
+// ReachedHeightToStopError indicates we've reached the required consensus
+// height and may exit.
+type ReachedHeightToStopError struct {
+	height int
+}
+
+func (e ReachedHeightToStopError) Error() string {
+	return fmt.Sprintf("reached height to stop %d", e.height)
+}
+
+// Save simulate WAL's crashing by sending an error to the panicCh and then
+// exiting the cs.receiveRoutine.
+func (w *crashingWAL) Save(m WALMessage) {
 	step := w.cs.StepString()
-	// key is a combination of WALMessage type : msgInfo msg type : consensus step
-	var key string
+	var key string // key is a combination of msgInfo msg type and consensus step
 	switch m.(type) {
 	case msgInfo:
-		key = fmt.Sprintf("%T:%T:%v", m, m.(msgInfo).Msg, step)
+		key = fmt.Sprintf("%T:%v", m.(msgInfo).Msg, step)
 	default:
-		key = fmt.Sprintf("%T::%v", m, step)
+		key = fmt.Sprintf(":%v", step)
 	}
 
-	if _, ok := w.panicedFor[key]; !ok { // panic during writing to WAL
+	if _, ok := w.panicedFor[key]; !ok {
 		w.panicedFor[key] = true
 		_, file, line, _ := runtime.Caller(1)
-		w.panicCh <- fmt.Errorf("failed to write to WAL (msg type: %T, step: %v, fileline: %s:%d)", m, step, file, line)
+		w.panicCh <- WALWriteError{fmt.Sprintf("failed to write to WAL (step: %v, fileline: %s:%d)", step, file, line)}
 		runtime.Goexit()
 	} else {
 		w.next.Save(m)
 	}
 }
 
-func (w *randomlyCrashingWAL) Group() *auto.Group        { return w.next.Group() }
-func (w *randomlyCrashingWAL) WriteEndHeight(height int) { w.next.WriteEndHeight(height) }
-func (w *randomlyCrashingWAL) Start() (bool, error)      { return w.next.Start() }
-func (w *randomlyCrashingWAL) Stop() bool                { return w.next.Stop() }
-func (w *randomlyCrashingWAL) Wait()                     { w.next.Wait() }
+func (w *crashingWAL) Group() *auto.Group { return w.next.Group() }
+
+// WriteEndHeight sends an error to the panicCh and exits the cs.receiveRoutine
+// if we've reached the required height. Otherwise, it calls WriteEndHeight on
+// the underlying WAL.
+func (w *crashingWAL) WriteEndHeight(height int) {
+	if height == w.heightToStop {
+		w.panicCh <- ReachedHeightToStopError{w.heightToStop}
+		runtime.Goexit()
+	} else {
+		w.next.WriteEndHeight(height)
+	}
+}
+
+func (w *crashingWAL) Start() (bool, error) { return w.next.Start() }
+func (w *crashingWAL) Stop() bool           { return w.next.Stop() }
+func (w *crashingWAL) Wait()                { w.next.Wait() }
 
 //------------------------------------------------------------------------------------------
 // Handshake Tests

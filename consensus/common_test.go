@@ -238,8 +238,12 @@ func newConsensusState(state *sm.State, pv *types.PrivValidator, app abci.Applic
 }
 
 func newConsensusStateWithConfig(thisConfig *cfg.Config, state *sm.State, pv *types.PrivValidator, app abci.Application) *ConsensusState {
-	// Get BlockStore
 	blockDB := dbm.NewMemDB()
+	return newConsensusStateWithConfigAndBlockStore(thisConfig, state, pv, app, blockDB)
+}
+
+func newConsensusStateWithConfigAndBlockStore(thisConfig *cfg.Config, state *sm.State, pv *types.PrivValidator, app abci.Application, blockDB dbm.DB) *ConsensusState {
+	// Get BlockStore
 	blockStore := bc.NewBlockStore(blockDB)
 
 	// one for mempool, one for consensus
