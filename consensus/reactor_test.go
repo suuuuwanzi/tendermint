@@ -270,19 +270,22 @@ func waitForAndValidateBlock(t *testing.T, n int, activeVals map[string]struct{}
 	}, css)
 }
 
-func waitForBlockWithUpdatedValsAndValidateIt(t *testing.T, n int, activeVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
+func waitForBlockWithUpdatedValsAndValidateIt(t *testing.T, n int, updatedVals map[string]struct{}, eventChans []chan interface{}, css []*ConsensusState, txs ...[]byte) {
 	timeoutWaitGroup(t, n, func(wg *sync.WaitGroup, j int) {
-	receive:
-		newBlockI := <-eventChans[j]
-		newBlock := newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
-		if newBlock.LastCommit.Size() == len(activeVals) {
-			t.Logf("Block with new validators height=%v validator=%v", newBlock.Height, j)
-		} else {
-			t.Logf("Block with no new validators height=%v validator=%v. Skipping...", newBlock.Height, j)
-			goto receive
+		var newBlock *types.Block
+	LOOP:
+		for {
+			newBlockI := <-eventChans[j]
+			newBlock = newBlockI.(types.TMEventData).Unwrap().(types.EventDataNewBlock).Block
+			if newBlock.LastCommit.Size() == len(updatedVals) {
+				t.Logf("Block with new validators height=%v validator=%v", newBlock.Height, j)
+				break LOOP
+			} else {
+				t.Logf("Block with no new validators height=%v validator=%v. Skipping...", newBlock.Height, j)
+			}
 		}
 
-		err := validateBlock(newBlock, activeVals)
+		err := validateBlock(newBlock, updatedVals)
 		if err != nil {
 			t.Fatal(err)
 		}

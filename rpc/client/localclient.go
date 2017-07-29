@@ -124,17 +124,24 @@ func (Local) Tx(hash []byte, prove bool) (*ctypes.ResultTx, error) {
 func (c *Local) Subscribe(ctx context.Context, query string, out chan<- interface{}) error {
 	q, err := tmquery.New(query)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse query")
+		return errors.Wrap(err, "failed to subscribe")
+	}
+	if err = c.EventBus.Subscribe(ctx, "rpclocalclient", q, out); err != nil {
+		return errors.Wrap(err, "failed to subscribe")
 	}
 	c.subscriptions[query] = q
-	return c.EventBus.Subscribe(ctx, "rpclocalclient", q, out)
+	return nil
 }
 
 func (c *Local) Unsubscribe(ctx context.Context, query string) error {
 	q, ok := c.subscriptions[query]
-	if ok {
-		return c.EventBus.Unsubscribe(ctx, "rpclocalclient", q)
+	if !ok {
+		return errors.New("subscription not found")
 	}
+	if err := c.EventBus.Unsubscribe(ctx, "rpclocalclient", q); err != nil {
+		return errors.Wrap(err, "failed to unsubscribe")
+	}
+	delete(c.subscriptions, query)
 	return nil
 }
 

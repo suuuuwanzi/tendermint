@@ -73,7 +73,6 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T, lastBlockHeight int, bl
 	defer func() {
 		cs.Stop()
 		cs.Wait()
-		cs = nil
 	}()
 
 	// This is just a signal that we haven't halted; its not something contained

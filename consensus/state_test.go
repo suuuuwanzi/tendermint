@@ -10,8 +10,6 @@ import (
 	"github.com/tendermint/tendermint/types"
 	. "github.com/tendermint/tmlibs/common"
 	tmpubsub "github.com/tendermint/tmlibs/pubsub"
-
-	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -241,11 +239,7 @@ func TestFullRound1(t *testing.T) {
 	cs, vss := randConsensusState(1)
 	height, round := cs.Height, cs.Round
 
-	// NOTE: voteChan cap of 0 ensures we can complete this
-	// before consensus can move to the next height (and cause a race condition)
-	voteCh := make(chan interface{}, 0)
-	err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryVote, voteCh)
-	require.NoError(t, err)
+	voteCh := subscribe(cs.eventBus, types.EventQueryVote)
 	propCh := subscribe(cs.eventBus, types.EventQueryCompleteProposal)
 	newRoundCh := subscribe(cs.eventBus, types.EventQueryNewRound)
 

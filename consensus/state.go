@@ -30,10 +30,6 @@ var (
 	ErrInvalidProposalPOLRound  = errors.New("Error invalid proposal POL round")
 	ErrAddingVote               = errors.New("Error adding vote")
 	ErrVoteHeightMismatch       = errors.New("Error vote height mismatch")
-
-	// see testReplayCrashBeforeWriteVote in replay_test.go
-	afterPublishEventPolkaCallback            func(*ConsensusState)
-	afterPublishEventCompleteProposalCallback func(*ConsensusState)
 )
 
 //-----------------------------------------------------------------------------
@@ -334,7 +330,6 @@ func (cs *ConsensusState) LoadCommit(height int) *types.Commit {
 // OnStart implements cmn.Service.
 // It loads the latest state via the WAL, and starts the timeout and receive routines.
 func (cs *ConsensusState) OnStart() error {
-
 	// we may set the WAL in testing before calling Start,
 	// so only OpenWAL if its still the nilWAL
 	if _, ok := cs.wal.(nilWAL); ok {
@@ -344,7 +339,7 @@ func (cs *ConsensusState) OnStart() error {
 			cs.Logger.Error("Error loading ConsensusState wal", "err", err.Error())
 			return err
 		}
-		cs.wal = wal // do we need a lock for this ?
+		cs.wal = wal
 	}
 
 	// we need the timeoutRoutine for replay so
@@ -934,9 +929,6 @@ func (cs *ConsensusState) enterPrevote(height int, round int) {
 	// fire event for how we got here
 	if cs.isProposalComplete() {
 		cs.eventBus.PublishEventCompleteProposal(cs.RoundStateEvent())
-		if afterPublishEventCompleteProposalCallback != nil {
-			afterPublishEventCompleteProposalCallback(cs)
-		}
 	} else {
 		// we received +2/3 prevotes for a future round
 		// TODO: catchup event?
