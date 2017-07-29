@@ -146,5 +146,9 @@ func (c *Local) Unsubscribe(ctx context.Context, query string) error {
 }
 
 func (c *Local) UnsubscribeAll(ctx context.Context) error {
-	return c.EventBus.UnsubscribeAll(ctx, "rpclocalclient")
+	if err := c.EventBus.UnsubscribeAll(ctx, "rpclocalclient"); err != nil {
+		return errors.Wrap(err, "failed to unsubscribe")
+	}
+	c.subscriptions = make(map[string]*tmquery.Query)
+	return nil
 }
