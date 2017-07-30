@@ -33,6 +33,9 @@ var consensusReplayConfig *cfg.Config
 
 func init() {
 	consensusReplayConfig = ResetConfig("consensus_replay_test")
+	// NOTE should be a test case, but if I put it inside one of the initFn
+	// below, I get a DATA RACE.
+	consensusReplayConfig.Consensus.BlockPartSize = 512
 }
 
 // These tests ensure we can always recover from failure at any part of the consensus process.
@@ -66,13 +69,13 @@ func startNewConsensusStateAndWaitForBlock(t *testing.T, lastBlockHeight int, bl
 	cs.SetLogger(logger)
 
 	bytes, _ := ioutil.ReadFile(cs.config.WalFile())
-	fmt.Printf("====== WAL: \n\r%s\n", bytes)
+	// fmt.Printf("====== WAL: \n\r%s\n", bytes)
+	t.Logf("====== WAL: \n\r%s\n", bytes)
 
 	_, err := cs.Start()
 	require.NoError(t, err)
 	defer func() {
 		cs.Stop()
-		cs.Wait()
 	}()
 
 	// This is just a signal that we haven't halted; its not something contained
@@ -112,16 +115,7 @@ func TestWALCrash(t *testing.T) {
 		{"empty block",
 			func(cs *ConsensusState, ctx context.Context) {},
 			1},
-		{"non-empty block",
-			sendTxs,
-			1},
-		{"non-empty block with smaller part size",
-			func(cs *ConsensusState, ctx context.Context) {
-				consensusReplayConfig.Consensus.BlockPartSize = 512
-				sendTxs(cs, ctx)
-			},
-			1},
-		{"many blocks",
+		{"many non-empty blocks",
 			sendTxs,
 			3},
 	}
@@ -135,12 +129,13 @@ func TestWALCrash(t *testing.T) {
 
 func crashWALandCheckLiveness(t *testing.T, initFn func(*ConsensusState, context.Context), heightToStop int) {
 	walPaniced := make(chan error)
-	crashingWal := &crashingWAL{panicCh: walPaniced, panicedFor: make(map[string]bool), heightToStop: heightToStop}
+	crashingWal := &crashingWAL{panicCh: walPaniced, heightToStop: heightToStop}
 
 	i := 1
 LOOP:
 	for {
-		fmt.Printf("====== LOOP %d\n", i)
+		// fmt.Printf("====== LOOP %d\n", i)
+		t.Logf("====== LOOP %d\n", i)
 
 		// create consensus state from a clean slate
 		logger := log.NewNopLogger()
@@ -163,8 +158,9 @@ LOOP:
 		// set crashing WAL
 		csWal, err := cs.OpenWAL(walFile)
 		require.NoError(t, err)
-		crashingWal.cs = cs
 		crashingWal.next = csWal
+		// reset the message counter
+		crashingWal.msgIndex = 1
 		cs.wal = crashingWal
 
 		// start consensus state
@@ -195,14 +191,15 @@ LOOP:
 }
 
 // crashingWAL is a WAL which crashes or rather simulates a crash during Save
-// (before and after). It records a consensus step so it won't fail the second
-// time for the same step.
+// (before and after). It remembers a message for which we last panicked
+// (lastPanicedForMsgIndex), so we don't panic for it in subsequent iterations.
 type crashingWAL struct {
 	next         WAL
-	cs           *ConsensusState
 	panicCh      chan error
-	panicedFor   map[string]bool
 	heightToStop int
+
+	msgIndex               int // current message index
+	lastPanicedForMsgIndex int // last message for which we panicked
 }
 
 // WALWriteError indicates a WAL crash.
@@ -227,21 +224,13 @@ func (e ReachedHeightToStopError) Error() string {
 // Save simulate WAL's crashing by sending an error to the panicCh and then
 // exiting the cs.receiveRoutine.
 func (w *crashingWAL) Save(m WALMessage) {
-	step := w.cs.StepString()
-	var key string // key is a combination of msgInfo msg type and consensus step
-	switch m.(type) {
-	case msgInfo:
-		key = fmt.Sprintf("%T:%v", m.(msgInfo).Msg, step)
-	default:
-		key = fmt.Sprintf(":%v", step)
-	}
-
-	if _, ok := w.panicedFor[key]; !ok {
-		w.panicedFor[key] = true
+	if w.msgIndex > w.lastPanicedForMsgIndex {
+		w.lastPanicedForMsgIndex = w.msgIndex
 		_, file, line, _ := runtime.Caller(1)
-		w.panicCh <- WALWriteError{fmt.Sprintf("failed to write to WAL (step: %v, fileline: %s:%d)", step, file, line)}
+		w.panicCh <- WALWriteError{fmt.Sprintf("failed to write %T to WAL (fileline: %s:%d)", m, file, line)}
 		runtime.Goexit()
 	} else {
+		w.msgIndex++
 		w.next.Save(m)
 	}
 }

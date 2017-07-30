@@ -653,10 +653,6 @@ func (cs *ConsensusState) receiveRoutine(maxSteps int) {
 	}
 }
 
-func (cs *ConsensusState) StepString() string {
-	return cs.Step.String()
-}
-
 // state transitions on complete-proposal, 2/3-any, 2/3-one
 func (cs *ConsensusState) handleMsg(mi msgInfo, rs RoundState) {
 	cs.mtx.Lock()
