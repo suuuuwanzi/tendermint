@@ -17,6 +17,7 @@ import (
 	"github.com/tendermint/tmlibs/log"
 )
 
+// StartHTTPServer starts an http server on the given address with the handler and returns the listener.
 func StartHTTPServer(listenAddr string, handler http.Handler, logger log.Logger) (listener net.Listener, err error) {
 	// listenAddr should be fully formed including tcp:// or unix:// prefix
 	var proto, addr string
@@ -48,7 +49,8 @@ func StartHTTPServer(listenAddr string, handler http.Handler, logger log.Logger)
 	return listener, nil
 }
 
-func WriteRPCResponseHTTPError(w http.ResponseWriter, httpCode int, res types.RPCResponse) {
+// WriteRPCResponseHTTPCode writes an http response with the given http response code.
+func WriteRPCResponseHTTPCode(w http.ResponseWriter, httpCode int, res types.RPCResponse) {
 	jsonBytes, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		panic(err)
@@ -59,19 +61,14 @@ func WriteRPCResponseHTTPError(w http.ResponseWriter, httpCode int, res types.RP
 	w.Write(jsonBytes)
 }
 
+// WriteRPCResponseHTTP writes an http success response with code 200.
 func WriteRPCResponseHTTP(w http.ResponseWriter, res types.RPCResponse) {
-	jsonBytes, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		panic(err)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	w.Write(jsonBytes)
+	WriteRPCResponseHTTPCode(w, 200, res)
 }
 
 //-----------------------------------------------------------------------------
 
-// Wraps an HTTP handler, adding error logging.
+// RecoverAndLogHandler wraps an HTTP handler, adding error logging.
 // If the inner function panics, the outer function recovers, logs, sends an
 // HTTP 500 error response.
 func RecoverAndLogHandler(handler http.Handler, logger log.Logger) http.Handler {
@@ -120,18 +117,19 @@ func RecoverAndLogHandler(handler http.Handler, logger log.Logger) http.Handler 
 	})
 }
 
-// Remember the status for logging
+// ResponseWriterWrapper remembers the status for logging.
 type ResponseWriterWrapper struct {
 	Status int
 	http.ResponseWriter
 }
 
+// WriteHeader writes the header.
 func (w *ResponseWriterWrapper) WriteHeader(status int) {
 	w.Status = status
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// implements http.Hijacker
+// Hijack implements http.Hijacker.
 func (w *ResponseWriterWrapper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
 }
