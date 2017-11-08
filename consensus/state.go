@@ -159,7 +159,7 @@ func (rs *RoundState) StringShort() string {
 //-----------------------------------------------------------------------------
 
 var (
-	msgQueueSize = 1000
+	msgQueueSize = 1000 //消息队列长度
 )
 
 // msgs from the reactor which may update the state
@@ -1070,7 +1070,7 @@ func (cs *ConsensusState) enterPrevoteWait(height int, round int) {
 // Enter: `timeoutPrevote` after any +2/3 prevotes.
 // Enter: +2/3 precomits for block or nil.
 // Enter: any +2/3 precommits for next round.
-// Lock & precommit the ProposalBlock if we have enough prevotes for it (a POL in this round)
+// Lock & precommit the ProposalfBlock i we have enough prevotes for it (a POL in this round)
 // else, unlock an existing lock and precommit nil if +2/3 of prevotes were nil,
 // else, precommit nil otherwise.
 func (cs *ConsensusState) enterPrecommit(height int, round int) {
